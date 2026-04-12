@@ -1,12 +1,13 @@
 # Rust LCD Service Plan
 
-This document is the implementation contract for the Rust service that keeps a static `320x320` JPEG on the ASUS liquid-cooler LCD.
+This document is the implementation contract for the Rust service that keeps a background image on the ASUS liquid-cooler LCD, with an optional generated dashboard overlay.
 
 ## Goal
 
 Build a long-running Rust service that:
 
-- loads a preprocessed `320x320` JPEG from disk
+- loads a source image from disk
+- optionally renders a live dashboard overlay on top of that background
 - packetizes it natively in Rust
 - uploads it to the cooler LCD through the reverse-engineered HID protocol
 - keeps the image visible by continuously re-uploading it
@@ -121,6 +122,7 @@ If a JPEG exceeds this, fail with a clear validation error instead of inventing 
 - continue re-uploading forever
 - if `refresh.interval_ms = 0`, re-upload continuously with no extra inter-cycle sleep
 - if the source file changes, reload and validate it, then use the new image on future uploads
+- if the dashboard overlay is enabled, rerender metrics on `dashboard.render_interval_ms` while reusing the latest prepared frame between renders
 
 ### Failure handling
 
@@ -178,6 +180,17 @@ color = true
 
 [source]
 path = "./image.jpg"
+rotate_degrees = 0
+
+[dashboard]
+render_interval_ms = 1000
+time_format = "24h"
+temperature_unit = "celsius"
+
+[[dashboard.slots]]
+title = "CPU"
+subtitle = "usage"
+metric = "cpu_usage_percent"
 
 [refresh]
 interval_ms = 0
@@ -192,9 +205,15 @@ init_on_connect = true
 ### Semantics
 
 - `device.serial` is optional and is used to disambiguate multiple matching coolers
-- `source.path` must point to a `320x320` baseline JPEG that also uses the conventional four Huffman tables, two 8-bit quantization tables `(0,1)`, and either `4:4:4` or `4:2:0`-style sampling
+- `source.path` is always the background image path
+- the runtime normalizes the source image to `320x320` before upload
 - `refresh.interval_ms = 0` means continuous looping
 - `protocol.init_on_connect = true` is the default and expected mode
+- `dashboard.slots` accepts `0..=4` configured slots
+- supported built-in slot metrics are `cpu_usage_percent`, `cpu_temperature`, `memory_used_percent`, and `time`
+- dashboard layout provides 4 fixed stacked slot positions with title and subtitle on the left and data on the right
+- if fewer than 4 slots are configured, they render in the top-most positions
+- if no slots are configured, the runtime keeps background-image-only behavior
 
 ## Internal Structure
 

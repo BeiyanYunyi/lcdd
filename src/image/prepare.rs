@@ -34,7 +34,7 @@ impl Rotation {
         }
     }
 
-    fn apply(self, image: DynamicImage) -> DynamicImage {
+    pub(crate) fn apply(self, image: DynamicImage) -> DynamicImage {
         match self {
             Self::Deg0 => image,
             Self::Deg90 => image.rotate90(),
@@ -69,6 +69,10 @@ impl PrepareOptions {
     pub fn new(rotation: Rotation) -> Self {
         Self { rotation }
     }
+
+    pub fn rotation(self) -> Rotation {
+        self.rotation
+    }
 }
 
 pub(crate) fn prepare_image_bytes(
@@ -76,6 +80,27 @@ pub(crate) fn prepare_image_bytes(
     bytes: &[u8],
     options: PrepareOptions,
 ) -> Result<PreparedImage> {
+    let normalized = load_normalized_image(path, bytes, options)?;
+    prepare_dynamic_image(path.to_path_buf(), normalized)
+}
+
+pub(crate) fn load_normalized_image(
+    path: &Path,
+    bytes: &[u8],
+    options: PrepareOptions,
+) -> Result<DynamicImage> {
+    load_normalized_image_with_rotation(path, bytes, options.rotation)
+}
+
+pub(crate) fn load_normalized_image_without_rotation(path: &Path, bytes: &[u8]) -> Result<DynamicImage> {
+    load_normalized_image_with_rotation(path, bytes, Rotation::Deg0)
+}
+
+fn load_normalized_image_with_rotation(
+    path: &Path,
+    bytes: &[u8],
+    rotation: Rotation,
+) -> Result<DynamicImage> {
     let format = ImageFormat::from_path(path)
         .ok()
         .or_else(|| image::guess_format(bytes).ok())
@@ -84,18 +109,23 @@ pub(crate) fn prepare_image_bytes(
 
     let decoded = image::load_from_memory_with_format(bytes, format)
         .with_context(|| format!("failed to decode {}", path.display()))?;
-    let normalized = normalize_image(path, decoded, options.rotation);
+    Ok(normalize_image(path, decoded, rotation))
+}
 
+pub(crate) fn prepare_dynamic_image(
+    source_path: std::path::PathBuf,
+    image: DynamicImage,
+) -> Result<PreparedImage> {
     let mut last_error = None;
     for quality in JPEG_QUALITIES {
-        let encoded = encode_jpeg(&normalized, quality)
-            .with_context(|| format!("failed to encode {} as JPEG", path.display()))?;
+        let encoded = encode_jpeg(&image, quality)
+            .with_context(|| format!("failed to encode {} as JPEG", source_path.display()))?;
 
         match packetize_jpeg(&encoded) {
             Ok(packets) => {
-                let (width, height) = validate_jpeg_for_lcd(path, &encoded)?;
+                let (width, height) = validate_jpeg_for_lcd(&source_path, &encoded)?;
                 return Ok(PreparedImage::new(
-                    path.to_path_buf(),
+                    source_path,
                     encoded,
                     packets,
                     width,
@@ -112,7 +142,7 @@ pub(crate) fn prepare_image_bytes(
         last_error.unwrap_or_else(|| (0, anyhow!("no JPEG encoding attempts were made")));
     Err(anyhow!(
         "{} could not be encoded into a {}x{} JPEG within {} chunks (last attempt: {} bytes): {last_error:#}",
-        path.display(),
+        source_path.display(),
         EXPECTED_JPEG_WIDTH,
         EXPECTED_JPEG_HEIGHT,
         MAX_SYNTHETIC_CHUNKS,

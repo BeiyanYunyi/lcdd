@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use log::{error, info};
 
 use super::{AppConfig, load_config};
-use crate::image::{FrameSource, PrepareOptions, WatchedFileSource};
+use crate::image::{DashboardSource, FrameSource, PrepareOptions, WatchedFileSource};
 use crate::logging;
 
 pub struct RuntimeState {
@@ -15,7 +15,7 @@ pub struct RuntimeState {
     last_seen_config_bytes: Vec<u8>,
     next_config_check_at: Instant,
     reconnect_required: bool,
-    source: WatchedFileSource,
+    source: Box<dyn FrameSource>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,12 +44,12 @@ impl RuntimeState {
         &self.config
     }
 
-    pub fn source(&self) -> &WatchedFileSource {
-        &self.source
+    pub fn source(&self) -> &dyn FrameSource {
+        self.source.as_ref()
     }
 
-    pub fn source_mut(&mut self) -> &mut WatchedFileSource {
-        &mut self.source
+    pub fn source_mut(&mut self) -> &mut dyn FrameSource {
+        self.source.as_mut()
     }
 
     pub fn refresh_interval(&self) -> Duration {
@@ -115,6 +115,7 @@ impl RuntimeState {
 
         let changed_fields = describe_config_changes(&self.config, &next_config);
         let source_changed = self.config.source != next_config.source;
+        let dashboard_changed = self.config.dashboard != next_config.dashboard;
         let logging_changed = self.config.logging != next_config.logging;
         let reload_interval_changed = self.config.refresh.reload_check_interval_ms
             != next_config.refresh.reload_check_interval_ms;
@@ -122,7 +123,7 @@ impl RuntimeState {
             || self.config.protocol != next_config.protocol
             || self.config.refresh.ack_timeout_ms != next_config.refresh.ack_timeout_ms;
 
-        let next_source = if source_changed {
+        let next_source = if source_changed || dashboard_changed || reload_interval_changed {
             Some(Self::build_source(&next_config)?)
         } else {
             None
@@ -137,8 +138,6 @@ impl RuntimeState {
         if let Some(source) = next_source {
             self.source = source;
             log_loaded_image(self.source.current(), "reloaded source from updated config");
-        } else if reload_interval_changed {
-            self.source.set_reload_interval(self.reload_interval());
         }
 
         self.next_config_check_at = Instant::now() + self.reload_interval();
@@ -153,12 +152,25 @@ impl RuntimeState {
         })
     }
 
-    fn build_source(config: &AppConfig) -> Result<WatchedFileSource> {
-        WatchedFileSource::new(
+    fn build_source(config: &AppConfig) -> Result<Box<dyn FrameSource>> {
+        let reload_interval = Duration::from_millis(config.refresh.reload_check_interval_ms);
+        let prepare_options = PrepareOptions::new(config.source.rotation()?);
+
+        if !config.dashboard.slots.is_empty() {
+            return Ok(Box::new(DashboardSource::build(
+                config.source.path.clone(),
+                reload_interval,
+                Duration::from_millis(config.dashboard.render_interval_ms),
+                prepare_options,
+                config.dashboard.clone(),
+            )?));
+        }
+
+        Ok(Box::new(WatchedFileSource::new(
             config.source.path.clone(),
-            Duration::from_millis(config.refresh.reload_check_interval_ms),
-            PrepareOptions::new(config.source.rotation()?),
-        )
+            reload_interval,
+            prepare_options,
+        )?))
     }
 
     fn reload_interval(&self) -> Duration {
@@ -174,6 +186,9 @@ fn describe_config_changes(current: &AppConfig, next: &AppConfig) -> Vec<&'stati
     }
     if current.source != next.source {
         changed.push("source");
+    }
+    if current.dashboard != next.dashboard {
+        changed.push("dashboard");
     }
     if current.logging.level != next.logging.level {
         changed.push("logging.level");
@@ -221,11 +236,9 @@ mod tests {
 
     use super::{ConfigReloadOutcome, RuntimeState};
     use crate::config::{
-        AppConfig, DeviceConfig, LogLevel, LoggingConfig, ProtocolConfig, RefreshConfig,
-        SourceConfig,
+        AppConfig, DashboardConfig, DashboardMetric, DashboardSlot, DeviceConfig, LogLevel,
+        LoggingConfig, ProtocolConfig, RefreshConfig, SourceConfig, TemperatureUnit, TimeFormat,
     };
-    use crate::image::FrameSource;
-
     #[test]
     fn apply_interval_change_without_reconnect() {
         let temp = test_dir("apply-interval-change");
@@ -386,9 +399,54 @@ mod tests {
                 path: image_path.to_path_buf(),
                 rotate_degrees: 0,
             },
+            dashboard: DashboardConfig::default(),
             refresh: RefreshConfig::default(),
             protocol: ProtocolConfig::default(),
         }
+    }
+
+    #[test]
+    fn dashboard_config_rebuilds_source_in_dashboard_mode() {
+        let temp = test_dir("dashboard-source-mode");
+        let image_path = write_test_image(&temp, "image.jpg");
+        let mut config = make_config(&image_path);
+        config.dashboard = sample_dashboard_config();
+        let config_path = temp.join("config.toml");
+
+        let state = RuntimeState::new(config_path, config, Vec::new()).unwrap();
+
+        assert_eq!(state.source().mode_name(), "dashboard");
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn empty_dashboard_slots_keep_file_source_mode() {
+        let temp = test_dir("file-source-mode");
+        let image_path = write_test_image(&temp, "image.jpg");
+        let config = make_config(&image_path);
+        let config_path = temp.join("config.toml");
+
+        let state = RuntimeState::new(config_path, config, Vec::new()).unwrap();
+
+        assert_eq!(state.source().mode_name(), "file");
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn describe_changes_includes_dashboard() {
+        let temp = test_dir("describe-dashboard-changes");
+        let image_path = write_test_image(&temp, "image.jpg");
+        let current = make_config(&image_path);
+        let mut next = current.clone();
+        next.dashboard = sample_dashboard_config();
+
+        let changed = super::describe_config_changes(&current, &next);
+
+        assert!(changed.contains(&"dashboard"));
+
+        let _ = fs::remove_dir_all(temp);
     }
 
     fn test_dir(name: &str) -> PathBuf {
@@ -414,5 +472,27 @@ mod tests {
             ),
         )
         .unwrap();
+    }
+
+    fn sample_dashboard_config() -> DashboardConfig {
+        DashboardConfig {
+            render_interval_ms: 1000,
+            time_format: TimeFormat::TwentyFourHour,
+            temperature_unit: TemperatureUnit::Celsius,
+            slots: vec![
+                slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
+                slot("CPU", "temp", DashboardMetric::CpuTemperature),
+                slot("MEM", "used", DashboardMetric::MemoryUsedPercent),
+                slot("TIME", "local", DashboardMetric::Time),
+            ],
+        }
+    }
+
+    fn slot(title: &str, subtitle: &str, metric: DashboardMetric) -> DashboardSlot {
+        DashboardSlot {
+            title: title.to_string(),
+            subtitle: subtitle.to_string(),
+            metric,
+        }
     }
 }

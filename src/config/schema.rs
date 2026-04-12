@@ -25,9 +25,19 @@ pub struct AppConfig {
     pub logging: LoggingConfig,
     pub source: SourceConfig,
     #[serde(default)]
+    pub dashboard: DashboardConfig,
+    #[serde(default)]
     pub refresh: RefreshConfig,
     #[serde(default)]
     pub protocol: ProtocolConfig,
+}
+
+impl AppConfig {
+    fn validate(&self) -> Result<()> {
+        self.source.validate()?;
+        self.dashboard.validate()?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -156,6 +166,87 @@ impl SourceConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct DashboardConfig {
+    #[serde(default = "default_dashboard_render_interval_ms")]
+    pub render_interval_ms: u64,
+    #[serde(default)]
+    pub time_format: TimeFormat,
+    #[serde(default)]
+    pub temperature_unit: TemperatureUnit,
+    #[serde(default)]
+    pub slots: Vec<DashboardSlot>,
+}
+
+impl DashboardConfig {
+    fn validate(&self) -> Result<()> {
+        ensure!(
+            self.render_interval_ms > 0,
+            "dashboard.render_interval_ms must be greater than 0"
+        );
+        ensure!(
+            self.slots.len() <= 4,
+            "dashboard supports at most 4 dashboard.slots entries; got {}",
+            self.slots.len()
+        );
+
+        for (index, slot) in self.slots.iter().enumerate() {
+            ensure!(
+                !slot.title.trim().is_empty(),
+                "dashboard.slots[{index}].title must not be empty"
+            );
+            ensure!(
+                !slot.subtitle.trim().is_empty(),
+                "dashboard.slots[{index}].subtitle must not be empty"
+            );
+        }
+
+        Ok(())
+    }
+}
+
+impl Default for DashboardConfig {
+    fn default() -> Self {
+        Self {
+            render_interval_ms: default_dashboard_render_interval_ms(),
+            time_format: TimeFormat::default(),
+            temperature_unit: TemperatureUnit::default(),
+            slots: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct DashboardSlot {
+    pub title: String,
+    pub subtitle: String,
+    pub metric: DashboardMetric,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DashboardMetric {
+    #[default]
+    CpuUsagePercent,
+    CpuTemperature,
+    MemoryUsedPercent,
+    Time,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+pub enum TimeFormat {
+    #[default]
+    #[serde(rename = "24h")]
+    TwentyFourHour,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TemperatureUnit {
+    #[default]
+    Celsius,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct RefreshConfig {
     #[serde(default = "default_refresh_interval_ms")]
     pub interval_ms: u64,
@@ -237,9 +328,8 @@ pub fn load_config(path: &Path) -> Result<AppConfig> {
         .try_deserialize()
         .with_context(|| format!("failed to deserialize config {}", path.display()))?;
     parsed
-        .source
         .validate()
-        .with_context(|| format!("invalid source config in {}", path.display()))?;
+        .with_context(|| format!("invalid config in {}", path.display()))?;
     Ok(parsed)
 }
 
@@ -279,6 +369,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_dashboard_render_interval_ms() -> u64 {
+    1000
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -286,7 +380,10 @@ mod tests {
     use config::{Config, File, FileFormat};
     use log::LevelFilter;
 
-    use super::{LoggingConfig, SourceConfig, default_config_path};
+    use super::{
+        DashboardConfig, DashboardMetric, DashboardSlot, LoggingConfig, SourceConfig,
+        TemperatureUnit, TimeFormat, default_config_path,
+    };
 
     #[test]
     fn default_config_search_order_prefers_toml_then_ron_then_corn() {
@@ -371,5 +468,87 @@ mod tests {
             .try_deserialize::<LoggingConfig>();
 
         assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn dashboard_defaults_to_empty_slot_list() {
+        let dashboard = DashboardConfig::default();
+
+        assert_eq!(dashboard.render_interval_ms, 1000);
+        assert_eq!(dashboard.time_format, TimeFormat::TwentyFourHour);
+        assert_eq!(dashboard.temperature_unit, TemperatureUnit::Celsius);
+        assert!(dashboard.slots.is_empty());
+        assert!(dashboard.validate().is_ok());
+    }
+
+    #[test]
+    fn dashboard_accepts_zero_slots() {
+        let dashboard = DashboardConfig {
+            render_interval_ms: 1000,
+            time_format: TimeFormat::TwentyFourHour,
+            temperature_unit: TemperatureUnit::Celsius,
+            slots: Vec::new(),
+        };
+
+        assert!(dashboard.validate().is_ok());
+    }
+
+    #[test]
+    fn dashboard_accepts_partial_slot_list() {
+        let dashboard = DashboardConfig {
+            render_interval_ms: 1000,
+            time_format: TimeFormat::TwentyFourHour,
+            temperature_unit: TemperatureUnit::Celsius,
+            slots: vec![
+                slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
+                slot("CPU", "temp", DashboardMetric::CpuTemperature),
+                slot("MEM", "used", DashboardMetric::MemoryUsedPercent),
+            ],
+        };
+
+        assert!(dashboard.validate().is_ok());
+    }
+
+    #[test]
+    fn dashboard_rejects_more_than_four_slots() {
+        let dashboard = DashboardConfig {
+            render_interval_ms: 1000,
+            time_format: TimeFormat::TwentyFourHour,
+            temperature_unit: TemperatureUnit::Celsius,
+            slots: vec![
+                slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
+                slot("CPU", "temp", DashboardMetric::CpuTemperature),
+                slot("MEM", "used", DashboardMetric::MemoryUsedPercent),
+                slot("TIME", "local", DashboardMetric::Time),
+                slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
+            ],
+        };
+
+        assert!(dashboard.validate().is_err());
+    }
+
+    #[test]
+    fn dashboard_accepts_supported_configuration() {
+        let dashboard = DashboardConfig {
+            render_interval_ms: 1000,
+            time_format: TimeFormat::TwentyFourHour,
+            temperature_unit: TemperatureUnit::Celsius,
+            slots: vec![
+                slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
+                slot("CPU", "temp", DashboardMetric::CpuTemperature),
+                slot("MEM", "used", DashboardMetric::MemoryUsedPercent),
+                slot("TIME", "local", DashboardMetric::Time),
+            ],
+        };
+
+        assert!(dashboard.validate().is_ok());
+    }
+
+    fn slot(title: &str, subtitle: &str, metric: DashboardMetric) -> DashboardSlot {
+        DashboardSlot {
+            title: title.to_string(),
+            subtitle: subtitle.to_string(),
+            metric,
+        }
     }
 }

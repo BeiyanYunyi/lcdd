@@ -9,7 +9,7 @@ At this point the repo can:
 - inspect and decode the captured USB traffic from `aura.pcapng`
 - reconstruct JPEG payloads from the capture
 - replay captured sessions back to the cooler for validation
-- run a native Rust service that keeps a static `320x320` JPEG on the LCD
+- run a native Rust service that keeps a `320x320` image on the LCD with an optional live dashboard overlay
 
 If you want protocol details, read [docs/protocol.md](docs/protocol.md). If you want the Rust service design notes, read [docs/rust-service.md](docs/rust-service.md).
 
@@ -17,7 +17,7 @@ If you want protocol details, read [docs/protocol.md](docs/protocol.md). If you 
 
 - [tools/lcdd_pcap.py](tools/lcdd_pcap.py): parses `aura.pcapng`, extracts upload bursts, and reconstructs JPEG payloads.
 - [tools/lcdd_hid.py](tools/lcdd_hid.py): talks to the live HID device and replays captured traffic for testing.
-- [src/main.rs](src/main.rs): Rust long-running service for showing a still image on the LCD.
+- [src/main.rs](src/main.rs): Rust long-running service for showing a background image with an optional generated dashboard overlay on the LCD.
 - [docs/protocol.md](docs/protocol.md): reverse-engineered protocol notes from the USB capture.
 - [docs/rust-service.md](docs/rust-service.md): service behavior, config contract, and implementation notes.
 - [aura.pcapng](aura.pcapng): the original USB capture used for reverse-engineering.
@@ -60,9 +60,11 @@ nix develop -c cargo test
 
 ## Rust LCD Service
 
-The Rust program is the intended runtime path for a still image.
+The Rust program is the intended runtime path for LCD output.
 
 It accepts `bmp`, `ico`, `png`, `jpg/jpeg`, and `webp` inputs, then converts them into an internal `320x320` JPEG before upload.
+
+`source.path` is always the background image path. When one or more `dashboard.slots` are configured, the service renders an optional live overlay on top using up to 4 fixed slot positions.
 
 ### JPEG Compatibility
 
@@ -125,6 +127,16 @@ color = true
 path = "./image.jpg"
 rotate_degrees = 0
 
+[dashboard]
+render_interval_ms = 1000
+time_format = "24h"
+temperature_unit = "celsius"
+
+[[dashboard.slots]]
+title = "CPU"
+subtitle = "usage"
+metric = "cpu_usage_percent"
+
 [refresh]
 interval_ms = 0
 ack_timeout_ms = 2000
@@ -148,6 +160,8 @@ Behavior summary:
 - sends the captured init packet on connect
 - packetizes the JPEG natively into `1024`-byte HID reports
 - decodes common image formats, optionally rotates them, and re-encodes to an internal JPEG
+- can render a live dashboard overlay with up to 4 fixed, top-aligned slots over a background image
+- collects built-in metrics for aggregate CPU usage, CPU temperature, memory usage, and local time
 - verifies the device ack after each upload
 - keeps re-uploading the image so the LCD does not clear itself
 - watches the file and reloads it when it changes
@@ -188,13 +202,13 @@ uv run tools/lcdd_hid.py list-devices
 ## Typical Workflow
 
 1. Use the Python tooling to inspect the capture, validate assumptions, and compare behavior against the original vendor traffic.
-2. Use the Rust service when you want an actual native Linux solution for keeping a still image on the LCD.
+2. Use the Rust service when you want an actual native Linux solution for keeping a background image or a simple live overlay on the LCD.
 3. Revisit the protocol docs when the hardware behaves differently than expected.
 
 ## Limitations
 
 - The project is currently Linux-oriented.
-- The Rust service is focused on a static still image, not full animation generation.
+- The Rust service supports a background image with a simple built-in dashboard overlay, not arbitrary animation generation yet.
 - Images must already be preprocessed to `320x320` JPEG.
 - Some protocol semantics are still inferred from capture data rather than fully proven.
 - Device behavior on shutdown, disconnect, or idle periods may still depend on hardware quirks.

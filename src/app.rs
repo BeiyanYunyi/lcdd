@@ -11,7 +11,7 @@ use log::{debug, info, warn};
 
 use crate::config::{ConfigReloadOutcome, RuntimeState, load_config, resolve_config_path};
 use crate::device::DeviceSession;
-use crate::image::FrameSource;
+use crate::image::RefreshOutcome;
 use crate::logging;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,12 +101,16 @@ fn run_connected_loop(
             return Ok(ConnectedLoopOutcome::Reconnect);
         }
 
-        if let Some(image) = state.source_mut().refresh_if_changed()? {
-            info!(
-                "using refreshed image {} ({} packets)",
-                image.source_path().display(),
-                image.packets().len()
-            );
+        let refresh_outcome = state.source_mut().refresh_if_changed()?;
+        if should_log_refresh(&refresh_outcome) {
+            let RefreshOutcome::SourceReloaded(image) = refresh_outcome else {
+                unreachable!("refresh logging only applies to source reloads");
+            };
+                info!(
+                    "using refreshed image {} ({} packets)",
+                    image.source_path().display(),
+                    image.packets().len()
+                );
         }
 
         let image = state.source().current();
@@ -134,6 +138,31 @@ fn run_connected_loop(
     }
 
     Ok(ConnectedLoopOutcome::Shutdown)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_log_refresh;
+    use crate::image::{PreparedImage, RefreshOutcome};
+
+    #[test]
+    fn refresh_logging_is_only_enabled_for_source_reloads() {
+        let image = PreparedImage::new(
+            "synthetic".into(),
+            vec![0xff, 0xd8, 0xff, 0xd9],
+            vec![],
+            320,
+            320,
+        );
+
+        assert!(should_log_refresh(&RefreshOutcome::SourceReloaded(&image)));
+        assert!(!should_log_refresh(&RefreshOutcome::ContentUpdated));
+        assert!(!should_log_refresh(&RefreshOutcome::Unchanged));
+    }
+}
+
+fn should_log_refresh(outcome: &RefreshOutcome<'_>) -> bool {
+    matches!(outcome, RefreshOutcome::SourceReloaded(_))
 }
 
 fn log_loaded_image(image: &crate::image::PreparedImage, prefix: &str) {
