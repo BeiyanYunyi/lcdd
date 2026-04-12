@@ -1,0 +1,21 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+out
+result
+*.pcapng
+aura-lcd.toml
+aura-lcd.ron
+aura-lcd.corn
+.codex
+
+# Virtual environments
+.venv
+
+# Added by cargo
+
+/target

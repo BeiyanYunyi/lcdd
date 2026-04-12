@@ -1,0 +1,197 @@
+# aura-pcap
+
+Reverse-engineering and runtime tooling for the LCD screen on an ASUS liquid cooler.
+
+This repository started as a USB capture analysis project. The goal was to understand how the vendor software talks to the cooler LCD, then replace that heavyweight Windows/Wine workflow with small native tools that do the same job on Linux.
+
+At this point the repo can:
+
+- inspect and decode the captured USB traffic from `aura.pcapng`
+- reconstruct JPEG payloads from the capture
+- replay captured sessions back to the cooler for validation
+- run a native Rust service that keeps a static `320x320` JPEG on the LCD
+
+If you want protocol details, read [docs/protocol.md](docs/protocol.md). If you want the Rust service design notes, read [docs/rust-service.md](docs/rust-service.md).
+
+## What Is In This Repo
+
+- [tools/aura_pcap.py](tools/aura_pcap.py): parses `aura.pcapng`, extracts upload bursts, and reconstructs JPEG payloads.
+- [tools/aura_hid.py](tools/aura_hid.py): talks to the live HID device and replays captured traffic for testing.
+- [src/main.rs](src/main.rs): Rust long-running service for showing a still image on the LCD.
+- [docs/protocol.md](docs/protocol.md): reverse-engineered protocol notes from the USB capture.
+- [docs/rust-service.md](docs/rust-service.md): service behavior, config contract, and implementation notes.
+- [aura.pcapng](aura.pcapng): the original USB capture used for reverse-engineering.
+
+## Current State
+
+The reverse-engineered target device is the ASUS LCD cooler at `VID:PID = 0x0b05:0x1ca9`.
+
+The current working model is:
+
+- interface `0` carries a `440`-byte init packet
+- interface `1` carries `1024`-byte image packets and returns a `16`-byte ack
+- the image payload is a baseline JPEG at `320x320`
+- the Rust service packetizes JPEGs natively and keeps the image alive by continuous re-upload
+
+This is good enough for practical use, but not every field in the protocol is fully understood yet.
+
+## Development Environment
+
+The easiest way to work in this repo is through the Nix dev shell defined in [flake.nix](flake.nix).
+
+```bash
+nix develop
+```
+
+From there you can run Rust and Python commands directly.
+
+Useful checks:
+
+```bash
+cargo test
+uv run tools/aura_hid.py list-devices
+```
+
+If you do not want an interactive shell, this also works:
+
+```bash
+nix develop -c cargo test
+```
+
+## Rust LCD Service
+
+The Rust program is the intended runtime path for a still image.
+
+It expects a JPEG that has already been prepared as `320x320`. It does not resize or transcode images for you in v1.
+
+### JPEG Compatibility
+
+Not every `320x320` baseline JPEG that opens on a desktop decoder works on the cooler.
+
+Observed examples:
+
+- `src/assets/test.jpg` loads successfully
+- `out/jpegs/bursts/burst_0001/image.jpg` loads successfully
+- `out/xi_small.jpg` loads successfully
+- `out/xi_small_failed.jpg` does not load successfully
+
+Two FFmpeg commands produced different results from the same source image:
+
+Failing output:
+
+```bash
+ffmpeg -y -i out/xi.jpg -q:v 12 out/xi_small_failed.jpg
+```
+
+Working output:
+
+```bash
+ffmpeg -y -i out/xi.jpg -frames:v 1 -c:v mjpeg -pix_fmt yuvj420p -huffman default -q:v 2 out/xi_small.jpg
+```
+
+`ffprobe` and marker inspection show that the difference is not just image size or "baseline JPEG" status. The failing file uses a different JPEG marker layout, including a shorter non-default Huffman block and different SOF0 component descriptors. `pix_fmt` alone is also not enough to explain success or failure, because `src/assets/test.jpg` works while reporting `yuvj444p`.
+
+For now, the safe recommendation is to generate the LCD input with the explicit MJPEG recipe above, especially `-pix_fmt yuvj420p` and `-huffman default`.
+
+### Config Discovery
+
+If you do not pass `--config`, the service looks for a config file in the current working directory in this order:
+
+1. `aura-lcd.toml`
+2. `aura-lcd.ron`
+3. `aura-lcd.corn`
+
+You can also point to a config explicitly:
+
+```bash
+cargo run -- --config ./aura-lcd.toml
+```
+
+### Example Config
+
+```toml
+[device]
+vendor_id = 0x0b05
+product_id = 0x1ca9
+interface_init = 0
+interface_bulk = 1
+# serial = "A247392SS000000"
+
+[source]
+path = "./image.jpg"
+
+[refresh]
+interval_ms = 0
+ack_timeout_ms = 2000
+retry_delay_ms = 1000
+reload_check_interval_ms = 500
+
+[protocol]
+init_on_connect = true
+```
+
+### Running The Service
+
+Inside the dev shell:
+
+```bash
+cargo run -- --config ./aura-lcd.toml
+```
+
+Behavior summary:
+
+- sends the captured init packet on connect
+- packetizes the JPEG natively into `1024`-byte HID reports
+- verifies the device ack after each upload
+- keeps re-uploading the image so the LCD does not clear itself
+- watches the file and reloads it when it changes
+- retries automatically if the cooler disconnects or re-enumerates
+
+## Python Prototype Tools
+
+The Python scripts are still useful for reverse-engineering and validation, but they are no longer the main runtime path.
+
+### Inspect The Capture
+
+```bash
+uv run tools/aura_pcap.py inspect-pcap aura.pcapng
+```
+
+### Replay A Captured Session
+
+Dry run:
+
+```bash
+uv run tools/aura_hid.py replay-session ./out/session/manifest.json
+```
+
+Live write:
+
+```bash
+uv run tools/aura_hid.py replay-session ./out/session/manifest.json --write --pace-scale 3.0
+```
+
+### List Matching HID Devices
+
+```bash
+uv run tools/aura_hid.py list-devices
+```
+
+## Typical Workflow
+
+1. Use the Python tooling to inspect the capture, validate assumptions, and compare behavior against the original vendor traffic.
+2. Use the Rust service when you want an actual native Linux solution for keeping a still image on the LCD.
+3. Revisit the protocol docs when the hardware behaves differently than expected.
+
+## Limitations
+
+- The project is currently Linux-oriented.
+- The Rust service is focused on a static still image, not full animation generation.
+- Images must already be preprocessed to `320x320` JPEG.
+- Some protocol semantics are still inferred from capture data rather than fully proven.
+- Device behavior on shutdown, disconnect, or idle periods may still depend on hardware quirks.
+
+## Further Reading
+
+- [docs/protocol.md](docs/protocol.md)
+- [docs/rust-service.md](docs/rust-service.md)
