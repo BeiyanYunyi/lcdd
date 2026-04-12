@@ -1,11 +1,10 @@
 use std::path::Path;
 
-use anyhow::{Result, anyhow, bail, ensure};
+use anyhow::{Result, bail, ensure};
 
 use crate::protocol::{EXPECTED_JPEG_HEIGHT, EXPECTED_JPEG_WIDTH};
 
 pub(crate) fn validate_jpeg_for_lcd(path: &Path, bytes: &[u8]) -> Result<(u16, u16)> {
-    validate_file_extension(path)?;
     let (width, height) = jpeg_dimensions(bytes)?;
     ensure!(
         width == EXPECTED_JPEG_WIDTH && height == EXPECTED_JPEG_HEIGHT,
@@ -17,20 +16,6 @@ pub(crate) fn validate_jpeg_for_lcd(path: &Path, bytes: &[u8]) -> Result<(u16, u
         height
     );
     Ok((width, height))
-}
-
-fn validate_file_extension(path: &Path) -> Result<()> {
-    let ext = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_ascii_lowercase())
-        .ok_or_else(|| anyhow!("{} must have a .jpg or .jpeg extension", path.display()))?;
-    ensure!(
-        matches!(ext.as_str(), "jpg" | "jpeg"),
-        "{} must have a .jpg or .jpeg extension",
-        path.display()
-    );
-    Ok(())
 }
 
 fn jpeg_dimensions(bytes: &[u8]) -> Result<(u16, u16)> {

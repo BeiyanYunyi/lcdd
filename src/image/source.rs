@@ -1,11 +1,11 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use log::{info, warn};
 
-use crate::image::{PreparedImage, packetize_jpeg, validate_jpeg_for_lcd};
+use crate::image::{PrepareOptions, PreparedImage, prepare_image_bytes};
 
 pub trait FrameSource {
     fn current(&self) -> &PreparedImage;
@@ -15,17 +15,27 @@ pub trait FrameSource {
 pub struct WatchedFileSource {
     path: PathBuf,
     reload_interval: Duration,
+    prepare_options: PrepareOptions,
     next_check_at: Instant,
+    last_source_bytes: Vec<u8>,
     current: PreparedImage,
 }
 
 impl WatchedFileSource {
-    pub fn new(path: PathBuf, reload_interval: Duration) -> Result<Self> {
-        let current = load_prepared_image(&path)?;
+    pub fn new(
+        path: PathBuf,
+        reload_interval: Duration,
+        prepare_options: PrepareOptions,
+    ) -> Result<Self> {
+        let source_bytes = fs::read(&path)
+            .with_context(|| format!("failed to read image file {}", path.display()))?;
+        let current = prepare_image_bytes(&path, &source_bytes, prepare_options)?;
         Ok(Self {
             path,
             reload_interval,
+            prepare_options,
             next_check_at: Instant::now() + reload_interval,
+            last_source_bytes: source_bytes,
             current,
         })
     }
@@ -44,11 +54,11 @@ impl FrameSource for WatchedFileSource {
 
         let candidate = fs::read(&self.path)
             .with_context(|| format!("failed to read image source {}", self.path.display()))?;
-        if candidate == self.current.jpeg_bytes() {
+        if candidate == self.last_source_bytes {
             return Ok(None);
         }
 
-        match prepare_image_bytes(&self.path, candidate) {
+        match prepare_image_bytes(&self.path, &candidate, self.prepare_options) {
             Ok(next) => {
                 info!(
                     "reloaded image {} ({} bytes, {} packets)",
@@ -56,6 +66,7 @@ impl FrameSource for WatchedFileSource {
                     next.jpeg_bytes().len(),
                     next.packets().len()
                 );
+                self.last_source_bytes = candidate;
                 self.current = next;
                 Ok(Some(&self.current))
             }
@@ -70,30 +81,11 @@ impl FrameSource for WatchedFileSource {
     }
 }
 
-pub fn load_prepared_image(path: &Path) -> Result<PreparedImage> {
-    let bytes =
-        fs::read(path).with_context(|| format!("failed to read image file {}", path.display()))?;
-    prepare_image_bytes(path, bytes)
-}
-
-pub fn prepare_image_bytes(path: &Path, bytes: Vec<u8>) -> Result<PreparedImage> {
-    let (width, height) = validate_jpeg_for_lcd(path, &bytes)
-        .with_context(|| format!("{} is not a supported JPEG", path.display()))?;
-    let packets = packetize_jpeg(&bytes)?;
-    Ok(PreparedImage::new(
-        path.to_path_buf(),
-        bytes,
-        packets,
-        width,
-        height,
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use super::{FrameSource, WatchedFileSource};
+    use crate::image::{FrameSource, PrepareOptions, WatchedFileSource};
 
     #[test]
     fn watched_file_source_keeps_last_valid_image_on_invalid_reload() {
@@ -108,7 +100,9 @@ mod tests {
         let path = temp.join("image.jpg");
         std::fs::write(&path, include_bytes!("../assets/test.jpg")).unwrap();
 
-        let mut source = WatchedFileSource::new(path.clone(), Duration::ZERO).unwrap();
+        let mut source =
+            WatchedFileSource::new(path.clone(), Duration::ZERO, PrepareOptions::default())
+                .unwrap();
         let original = source.current().jpeg_bytes().to_vec();
 
         std::fs::write(&path, b"not-a-jpeg").unwrap();

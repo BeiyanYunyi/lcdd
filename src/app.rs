@@ -10,11 +10,9 @@ use log::{debug, info, warn};
 
 use crate::config::{AppConfig, load_config, resolve_config_path};
 use crate::device::DeviceSession;
-use crate::image::{FrameSource, WatchedFileSource};
+use crate::image::{FrameSource, PrepareOptions, WatchedFileSource};
 
 pub fn run() -> Result<()> {
-    env_logger::init();
-
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_flag = shutdown.clone();
     ctrlc::set_handler(move || {
@@ -29,6 +27,7 @@ pub fn run() -> Result<()> {
     let mut source = WatchedFileSource::new(
         config.source.path.clone(),
         Duration::from_millis(config.refresh.reload_check_interval_ms),
+        PrepareOptions::new(config.source.rotation()?),
     )?;
     info!(
         "loaded image {} ({} bytes, {} packets, {}x{})",

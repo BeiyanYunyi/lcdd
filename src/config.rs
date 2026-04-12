@@ -6,6 +6,7 @@ use anyhow::{Context, Result, anyhow, bail, ensure};
 use config::{Config, File};
 use serde::Deserialize;
 
+use crate::image::Rotation;
 use crate::protocol::{
     DEFAULT_ACK_TIMEOUT_MS, DEFAULT_BULK_INTERFACE, DEFAULT_INIT_INTERFACE, DEFAULT_PRODUCT_ID,
     DEFAULT_REFRESH_INTERVAL_MS, DEFAULT_RELOAD_CHECK_INTERVAL_MS, DEFAULT_RETRY_DELAY_MS,
@@ -52,6 +53,19 @@ impl Default for DeviceConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SourceConfig {
     pub path: PathBuf,
+    #[serde(default)]
+    pub rotate_degrees: u16,
+}
+
+impl SourceConfig {
+    pub fn rotation(&self) -> Result<Rotation> {
+        Rotation::try_from(self.rotate_degrees)
+    }
+
+    fn validate(&self) -> Result<()> {
+        let _ = self.rotation()?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -144,6 +158,10 @@ pub fn load_config(path: &Path) -> Result<AppConfig> {
     let parsed: AppConfig = config
         .try_deserialize()
         .with_context(|| format!("failed to deserialize config {}", path.display()))?;
+    parsed
+        .source
+        .validate()
+        .with_context(|| format!("invalid source config in {}", path.display()))?;
     Ok(parsed)
 }
 
@@ -185,7 +203,9 @@ fn default_true() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::default_config_path;
+    use std::path::PathBuf;
+
+    use super::{SourceConfig, default_config_path};
 
     #[test]
     fn default_config_search_order_prefers_toml_then_ron_then_corn() {
@@ -206,5 +226,34 @@ mod tests {
         std::fs::remove_file(&ron).unwrap();
         assert_eq!(default_config_path(temp.clone()).unwrap(), corn);
         let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn source_rotation_defaults_to_zero_degrees() {
+        let source = SourceConfig {
+            path: PathBuf::from("image.png"),
+            rotate_degrees: 0,
+        };
+        assert_eq!(source.rotation().unwrap().degrees(), 0);
+    }
+
+    #[test]
+    fn source_rotation_accepts_supported_angles() {
+        for degrees in [0u16, 90, 180, 270] {
+            let source = SourceConfig {
+                path: PathBuf::from("image.png"),
+                rotate_degrees: degrees,
+            };
+            assert_eq!(source.rotation().unwrap().degrees(), degrees);
+        }
+    }
+
+    #[test]
+    fn source_rotation_rejects_invalid_angles() {
+        let source = SourceConfig {
+            path: PathBuf::from("image.png"),
+            rotate_degrees: 45,
+        };
+        assert!(source.rotation().is_err());
     }
 }

@@ -62,7 +62,7 @@ nix develop -c cargo test
 
 The Rust program is the intended runtime path for a still image.
 
-It expects a JPEG that has already been prepared as `320x320`. It does not resize or transcode images for you in v1.
+It accepts `bmp`, `ico`, `png`, `jpg/jpeg`, and `webp` inputs, then converts them into an internal `320x320` JPEG before upload.
 
 ### JPEG Compatibility
 
@@ -91,7 +91,7 @@ ffmpeg -y -i out/xi.jpg -frames:v 1 -c:v mjpeg -pix_fmt yuvj420p -huffman defaul
 
 `ffprobe` and marker inspection show that the difference is not just image size or "baseline JPEG" status. The failing file uses a different JPEG marker layout, including a shorter non-default Huffman block and different SOF0 component descriptors. `pix_fmt` alone is also not enough to explain success or failure, because `src/assets/test.jpg` works while reporting `yuvj444p`.
 
-For now, the safe recommendation is to generate the LCD input with the explicit MJPEG recipe above, especially `-pix_fmt yuvj420p` and `-huffman default`.
+The runtime now performs its own JPEG conversion with the `image` crate, but the FFmpeg recipe above remains the reference compatibility target when comparing behavior or debugging device-visible differences.
 
 ### Config Discovery
 
@@ -119,6 +119,7 @@ interface_bulk = 1
 
 [source]
 path = "./image.jpg"
+rotate_degrees = 0
 
 [refresh]
 interval_ms = 0
@@ -142,6 +143,7 @@ Behavior summary:
 
 - sends the captured init packet on connect
 - packetizes the JPEG natively into `1024`-byte HID reports
+- decodes common image formats, optionally rotates them, and re-encodes to an internal JPEG
 - verifies the device ack after each upload
 - keeps re-uploading the image so the LCD does not clear itself
 - watches the file and reloads it when it changes

@@ -1,9 +1,11 @@
 mod jpeg;
 mod packetize;
+mod prepare;
 mod source;
 
 use std::path::{Path, PathBuf};
 
+pub use prepare::{PrepareOptions, Rotation};
 pub use source::{FrameSource, WatchedFileSource};
 
 #[derive(Debug, Clone)]
@@ -61,4 +63,12 @@ pub(crate) fn packetize_jpeg(
     bytes: &[u8],
 ) -> anyhow::Result<Vec<[u8; crate::protocol::HID_PACKET_LEN]>> {
     packetize::packetize_jpeg(bytes)
+}
+
+pub(crate) fn prepare_image_bytes(
+    path: &Path,
+    bytes: &[u8],
+    options: PrepareOptions,
+) -> anyhow::Result<PreparedImage> {
+    prepare::prepare_image_bytes(path, bytes, options)
 }
