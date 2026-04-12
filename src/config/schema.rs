@@ -13,7 +13,7 @@ use crate::protocol::{
     DEFAULT_VENDOR_ID,
 };
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct AppConfig {
     #[serde(default)]
     pub device: DeviceConfig,
@@ -24,7 +24,7 @@ pub struct AppConfig {
     pub protocol: ProtocolConfig,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct DeviceConfig {
     #[serde(default = "default_vendor_id")]
     pub vendor_id: u16,
@@ -50,7 +50,7 @@ impl Default for DeviceConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct SourceConfig {
     pub path: PathBuf,
     #[serde(default)]
@@ -68,7 +68,7 @@ impl SourceConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct RefreshConfig {
     #[serde(default = "default_refresh_interval_ms")]
     pub interval_ms: u64,
@@ -91,7 +91,7 @@ impl Default for RefreshConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ProtocolConfig {
     #[serde(default = "default_true")]
     pub init_on_connect: bool,
@@ -100,7 +100,7 @@ pub struct ProtocolConfig {
 impl Default for ProtocolConfig {
     fn default() -> Self {
         Self {
-            init_on_connect: true,
+            init_on_connect: false, // tested, connecting without init is fine.
         }
     }
 }

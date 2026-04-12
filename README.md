@@ -147,6 +147,7 @@ Behavior summary:
 - verifies the device ack after each upload
 - keeps re-uploading the image so the LCD does not clear itself
 - watches the file and reloads it when it changes
+- watches the config file and live-applies valid updates
 - retries automatically if the cooler disconnects or re-enumerates
 
 ## Python Prototype Tools

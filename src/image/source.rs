@@ -39,6 +39,11 @@ impl WatchedFileSource {
             current,
         })
     }
+
+    pub fn set_reload_interval(&mut self, reload_interval: Duration) {
+        self.reload_interval = reload_interval;
+        self.next_check_at = Instant::now() + reload_interval;
+    }
 }
 
 impl FrameSource for WatchedFileSource {
