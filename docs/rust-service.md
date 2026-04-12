@@ -15,8 +15,8 @@ Build a long-running Rust service that:
 
 The Python tools remain prototype and reverse-engineering utilities only:
 
-- `tools/aura_pcap.py`
-- `tools/aura_hid.py`
+- `tools/lcdd_pcap.py`
+- `tools/lcdd_hid.py`
 
 ## Confirmed Protocol Facts
 
@@ -158,9 +158,9 @@ The service is config-first.
 
 If `--config` is not passed, search the current working directory in this order:
 
-1. `aura-lcd.toml`
-2. `aura-lcd.ron`
-3. `aura-lcd.corn`
+1. `config.toml`
+2. `config.ron`
+3. `config.corn`
 
 ### Config schema
 

@@ -133,14 +133,14 @@ pub fn resolve_config_path(args: impl IntoIterator<Item = OsString>) -> Result<P
 }
 
 pub fn default_config_path(cwd: PathBuf) -> Result<PathBuf> {
-    for candidate in ["aura-lcd.toml", "aura-lcd.ron", "aura-lcd.corn"] {
+    for candidate in ["config.toml", "config.ron", "config.corn"] {
         let path = cwd.join(candidate);
         if path.is_file() {
             return Ok(path);
         }
     }
     bail!(
-        "no config file found in {} (expected aura-lcd.toml, aura-lcd.ron, or aura-lcd.corn)",
+        "no config file found in {} (expected config.toml, config.ron, or config.corn)",
         cwd.display()
     )
 }
@@ -209,13 +209,13 @@ mod tests {
 
     #[test]
     fn default_config_search_order_prefers_toml_then_ron_then_corn() {
-        let temp = std::env::temp_dir().join(format!("aura-pcap-test-{}", std::process::id()));
+        let temp = std::env::temp_dir().join(format!("lcdd-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp);
         std::fs::create_dir_all(&temp).unwrap();
 
-        let ron = temp.join("aura-lcd.ron");
-        let toml = temp.join("aura-lcd.toml");
-        let corn = temp.join("aura-lcd.corn");
+        let ron = temp.join("config.ron");
+        let toml = temp.join("config.toml");
+        let corn = temp.join("config.corn");
         std::fs::write(&ron, "()").unwrap();
         std::fs::write(&toml, "").unwrap();
         std::fs::write(&corn, "").unwrap();

@@ -32,7 +32,7 @@
             overlays = [ (import rust-overlay) ];
           };
           devShells.default = pkgs.mkShell {
-            name = "aura-pcap-dev-shell";
+            name = "lcdd-dev-shell";
             buildInputs = with pkgs; [
               gcc
               pkg-config
@@ -61,7 +61,7 @@
                 hidapi
               ];
               CI = "true";
-              meta.mainProgram = "aura-pcap";
+              meta.mainProgram = "lcdd";
             };
         };
       systems = [

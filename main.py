@@ -1,5 +1,5 @@
 def main():
-    print("Hello from aura-pcap!")
+    print("Hello from lcdd!")
 
 
 if __name__ == "__main__":

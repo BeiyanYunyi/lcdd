@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn watched_file_source_keeps_last_valid_image_on_invalid_reload() {
         let temp = std::env::temp_dir().join(format!(
-            "aura-pcap-source-test-{}-{}",
+            "lcdd-source-test-{}-{}",
             std::process::id(),
             "invalid-reload"
         ));

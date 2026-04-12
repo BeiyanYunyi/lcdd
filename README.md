@@ -1,4 +1,4 @@
-# aura-pcap
+# lcdd
 
 Reverse-engineering and runtime tooling for the LCD screen on an ASUS liquid cooler.
 
@@ -15,8 +15,8 @@ If you want protocol details, read [docs/protocol.md](docs/protocol.md). If you 
 
 ## What Is In This Repo
 
-- [tools/aura_pcap.py](tools/aura_pcap.py): parses `aura.pcapng`, extracts upload bursts, and reconstructs JPEG payloads.
-- [tools/aura_hid.py](tools/aura_hid.py): talks to the live HID device and replays captured traffic for testing.
+- [tools/lcdd_pcap.py](tools/lcdd_pcap.py): parses `aura.pcapng`, extracts upload bursts, and reconstructs JPEG payloads.
+- [tools/lcdd_hid.py](tools/lcdd_hid.py): talks to the live HID device and replays captured traffic for testing.
 - [src/main.rs](src/main.rs): Rust long-running service for showing a still image on the LCD.
 - [docs/protocol.md](docs/protocol.md): reverse-engineered protocol notes from the USB capture.
 - [docs/rust-service.md](docs/rust-service.md): service behavior, config contract, and implementation notes.
@@ -49,7 +49,7 @@ Useful checks:
 
 ```bash
 cargo test
-uv run tools/aura_hid.py list-devices
+uv run tools/lcdd_hid.py list-devices
 ```
 
 If you do not want an interactive shell, this also works:
@@ -97,14 +97,14 @@ The runtime now performs its own JPEG conversion with the `image` crate, but the
 
 If you do not pass `--config`, the service looks for a config file in the current working directory in this order:
 
-1. `aura-lcd.toml`
-2. `aura-lcd.ron`
-3. `aura-lcd.corn`
+1. `config.toml`
+2. `config.ron`
+3. `config.corn`
 
 You can also point to a config explicitly:
 
 ```bash
-cargo run -- --config ./aura-lcd.toml
+cargo run -- --config ./config.toml
 ```
 
 ### Example Config
@@ -136,7 +136,7 @@ init_on_connect = true
 Inside the dev shell:
 
 ```bash
-cargo run -- --config ./aura-lcd.toml
+cargo run -- --config ./config.toml
 ```
 
 Behavior summary:
@@ -157,7 +157,7 @@ The Python scripts are still useful for reverse-engineering and validation, but 
 ### Inspect The Capture
 
 ```bash
-uv run tools/aura_pcap.py inspect-pcap aura.pcapng
+uv run tools/lcdd_pcap.py inspect-pcap aura.pcapng
 ```
 
 ### Replay A Captured Session
@@ -165,19 +165,19 @@ uv run tools/aura_pcap.py inspect-pcap aura.pcapng
 Dry run:
 
 ```bash
-uv run tools/aura_hid.py replay-session ./out/session/manifest.json
+uv run tools/lcdd_hid.py replay-session ./out/session/manifest.json
 ```
 
 Live write:
 
 ```bash
-uv run tools/aura_hid.py replay-session ./out/session/manifest.json --write --pace-scale 3.0
+uv run tools/lcdd_hid.py replay-session ./out/session/manifest.json --write --pace-scale 3.0
 ```
 
 ### List Matching HID Devices
 
 ```bash
-uv run tools/aura_hid.py list-devices
+uv run tools/lcdd_hid.py list-devices
 ```
 
 ## Typical Workflow

@@ -350,7 +350,7 @@ def command_send_captured_frame(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Interact with the ASUS Aura LCD hidraw interfaces")
+    parser = argparse.ArgumentParser(description="Interact with the lcdd target hidraw interfaces")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     list_parser = subparsers.add_parser("list-devices", help="List hidraw nodes and identify the target device")

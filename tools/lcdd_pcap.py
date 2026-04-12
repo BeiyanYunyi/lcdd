@@ -410,7 +410,7 @@ def command_reconstruct_jpegs(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Analyze ASUS Aura LCD USB captures")
+    parser = argparse.ArgumentParser(description="Analyze lcdd USB captures")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     inspect = subparsers.add_parser("inspect-pcap", help="Print a capture summary as JSON")

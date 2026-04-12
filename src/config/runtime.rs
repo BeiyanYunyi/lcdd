@@ -214,7 +214,7 @@ mod tests {
         let temp = test_dir("apply-interval-change");
         let image_path = write_test_image(&temp, "image.jpg");
         let config = make_config(&image_path);
-        let config_path = temp.join("aura-lcd.toml");
+        let config_path = temp.join("config.toml");
 
         let mut state = RuntimeState::new(config_path, config.clone(), Vec::new()).unwrap();
         let mut next = config;
@@ -236,7 +236,7 @@ mod tests {
         let temp = test_dir("apply-ack-timeout-change");
         let image_path = write_test_image(&temp, "image.jpg");
         let config = make_config(&image_path);
-        let config_path = temp.join("aura-lcd.toml");
+        let config_path = temp.join("config.toml");
 
         let mut state = RuntimeState::new(config_path, config.clone(), Vec::new()).unwrap();
         let mut next = config;
@@ -256,7 +256,7 @@ mod tests {
         let first = write_test_image(&temp, "first.jpg");
         let second = write_test_image(&temp, "second.jpg");
         let config = make_config(&first);
-        let config_path = temp.join("aura-lcd.toml");
+        let config_path = temp.join("config.toml");
 
         let mut state = RuntimeState::new(config_path, config.clone(), Vec::new()).unwrap();
         let mut next = config;
@@ -274,7 +274,7 @@ mod tests {
     fn invalid_config_reload_keeps_last_valid_runtime() {
         let temp = test_dir("invalid-config-reload");
         let image_path = write_test_image(&temp, "image.jpg");
-        let config_path = temp.join("aura-lcd.toml");
+        let config_path = temp.join("config.toml");
         write_config_file(&config_path, &image_path, 2000);
 
         let config_bytes = fs::read(&config_path).unwrap();
@@ -311,11 +311,8 @@ mod tests {
     }
 
     fn test_dir(name: &str) -> PathBuf {
-        let temp = std::env::temp_dir().join(format!(
-            "aura-pcap-app-test-{}-{}",
-            std::process::id(),
-            name
-        ));
+        let temp =
+            std::env::temp_dir().join(format!("lcdd-app-test-{}-{}", std::process::id(), name));
         let _ = fs::remove_dir_all(&temp);
         fs::create_dir_all(&temp).unwrap();
         temp
