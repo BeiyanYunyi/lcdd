@@ -7,6 +7,7 @@ use log::{error, info};
 
 use super::{AppConfig, load_config};
 use crate::image::{FrameSource, PrepareOptions, WatchedFileSource};
+use crate::logging;
 
 pub struct RuntimeState {
     config_path: PathBuf,
@@ -114,6 +115,7 @@ impl RuntimeState {
 
         let changed_fields = describe_config_changes(&self.config, &next_config);
         let source_changed = self.config.source != next_config.source;
+        let logging_changed = self.config.logging != next_config.logging;
         let reload_interval_changed = self.config.refresh.reload_check_interval_ms
             != next_config.refresh.reload_check_interval_ms;
         let reconnect_required = self.config.device != next_config.device
@@ -125,6 +127,10 @@ impl RuntimeState {
         } else {
             None
         };
+
+        if logging_changed {
+            logging::reload(&next_config.logging)?;
+        }
 
         self.config = next_config;
 
@@ -169,6 +175,12 @@ fn describe_config_changes(current: &AppConfig, next: &AppConfig) -> Vec<&'stati
     if current.source != next.source {
         changed.push("source");
     }
+    if current.logging.level != next.logging.level {
+        changed.push("logging.level");
+    }
+    if current.logging.color != next.logging.color {
+        changed.push("logging.color");
+    }
     if current.refresh.interval_ms != next.refresh.interval_ms {
         changed.push("refresh.interval_ms");
     }
@@ -205,8 +217,13 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
+    use log::LevelFilter;
+
     use super::{ConfigReloadOutcome, RuntimeState};
-    use crate::config::{AppConfig, DeviceConfig, ProtocolConfig, RefreshConfig, SourceConfig};
+    use crate::config::{
+        AppConfig, DeviceConfig, LogLevel, LoggingConfig, ProtocolConfig, RefreshConfig,
+        SourceConfig,
+    };
     use crate::image::FrameSource;
 
     #[test]
@@ -246,6 +263,47 @@ mod tests {
 
         assert_eq!(outcome, ConfigReloadOutcome::ReconnectRequired);
         assert!(state.reconnect_required);
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn apply_logging_level_change_without_reconnect() {
+        let temp = test_dir("apply-logging-level-change");
+        let image_path = write_test_image(&temp, "image.jpg");
+        let config = make_config(&image_path);
+        let config_path = temp.join("config.toml");
+
+        crate::logging::init(&config.logging).unwrap();
+
+        let mut state = RuntimeState::new(config_path, config.clone(), Vec::new()).unwrap();
+        let mut next = config;
+        next.logging.level = LogLevel::from(LevelFilter::Debug);
+
+        let outcome = state.apply_config(next).unwrap();
+
+        assert_eq!(outcome, ConfigReloadOutcome::Applied);
+        assert!(!state.reconnect_required);
+        assert_eq!(log::max_level(), LevelFilter::Debug);
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn apply_logging_color_change_without_reconnect() {
+        let temp = test_dir("apply-logging-color-change");
+        let image_path = write_test_image(&temp, "image.jpg");
+        let config = make_config(&image_path);
+        let config_path = temp.join("config.toml");
+
+        let mut state = RuntimeState::new(config_path, config.clone(), Vec::new()).unwrap();
+        let mut next = config;
+        next.logging.color = false;
+
+        let outcome = state.apply_config(next).unwrap();
+
+        assert_eq!(outcome, ConfigReloadOutcome::Applied);
+        assert!(!state.reconnect_required);
 
         let _ = fs::remove_dir_all(temp);
     }
@@ -298,9 +356,32 @@ mod tests {
         let _ = fs::remove_dir_all(temp);
     }
 
+    #[test]
+    fn describe_changes_includes_logging_fields() {
+        let temp = test_dir("describe-logging-changes");
+        let image_path = write_test_image(&temp, "image.jpg");
+        let mut current = make_config(&image_path);
+        let mut next = current.clone();
+        next.logging.level = LogLevel::from(LevelFilter::Trace);
+        next.logging.color = false;
+
+        let changed = super::describe_config_changes(&current, &next);
+
+        assert!(changed.contains(&"logging.level"));
+        assert!(changed.contains(&"logging.color"));
+
+        current.logging = next.logging.clone();
+        let changed = super::describe_config_changes(&current, &next);
+        assert!(!changed.contains(&"logging.level"));
+        assert!(!changed.contains(&"logging.color"));
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
     fn make_config(image_path: &Path) -> AppConfig {
         AppConfig {
             device: DeviceConfig::default(),
+            logging: LoggingConfig::default(),
             source: SourceConfig {
                 path: image_path.to_path_buf(),
                 rotate_degrees: 0,

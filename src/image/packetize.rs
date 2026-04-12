@@ -7,7 +7,7 @@ pub(crate) fn packetize_jpeg(bytes: &[u8]) -> Result<Vec<[u8; HID_PACKET_LEN]>> 
     let chunk_count = bytes.len().div_ceil(HID_PAYLOAD_LEN);
     ensure!(
         chunk_count <= MAX_SYNTHETIC_CHUNKS,
-        "JPEG payload requires {chunk_count} chunks; v1 supports at most {MAX_SYNTHETIC_CHUNKS}"
+        "JPEG payload requires {chunk_count} chunks; supports at most {MAX_SYNTHETIC_CHUNKS}"
     );
 
     let mut packets = Vec::with_capacity(chunk_count);

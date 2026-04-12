@@ -1,10 +1,14 @@
 use std::env;
 use std::ffi::OsString;
+use std::fmt;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use config::{Config, File};
-use serde::Deserialize;
+use log::LevelFilter;
+use serde::de::{self, Visitor};
+use serde::{Deserialize, Deserializer};
 
 use crate::image::Rotation;
 use crate::protocol::{
@@ -17,11 +21,94 @@ use crate::protocol::{
 pub struct AppConfig {
     #[serde(default)]
     pub device: DeviceConfig,
+    #[serde(default)]
+    pub logging: LoggingConfig,
     pub source: SourceConfig,
     #[serde(default)]
     pub refresh: RefreshConfig,
     #[serde(default)]
     pub protocol: ProtocolConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct LoggingConfig {
+    #[serde(default)]
+    pub level: LogLevel,
+    #[serde(default = "default_true")]
+    pub color: bool,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            level: LogLevel::default(),
+            color: default_true(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LogLevel(LevelFilter);
+
+impl LogLevel {
+    pub fn into_level_filter(self) -> LevelFilter {
+        self.0
+    }
+}
+
+impl Default for LogLevel {
+    fn default() -> Self {
+        Self(LevelFilter::Info)
+    }
+}
+
+impl From<LevelFilter> for LogLevel {
+    fn from(level: LevelFilter) -> Self {
+        Self(level)
+    }
+}
+
+impl FromStr for LogLevel {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        let level = match value.trim().to_ascii_lowercase().as_str() {
+            "off" => LevelFilter::Off,
+            "error" => LevelFilter::Error,
+            "warn" => LevelFilter::Warn,
+            "info" => LevelFilter::Info,
+            "debug" => LevelFilter::Debug,
+            "trace" => LevelFilter::Trace,
+            _ => bail!("unsupported log level {value:?}"),
+        };
+        Ok(Self(level))
+    }
+}
+
+impl<'de> Deserialize<'de> for LogLevel {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct LogLevelVisitor;
+
+        impl Visitor<'_> for LogLevelVisitor {
+            type Value = LogLevel;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a log level string such as info, debug, or trace")
+            }
+
+            fn visit_str<E>(self, value: &str) -> std::result::Result<LogLevel, E>
+            where
+                E: de::Error,
+            {
+                LogLevel::from_str(value).map_err(E::custom)
+            }
+        }
+
+        deserializer.deserialize_str(LogLevelVisitor)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -91,18 +178,9 @@ impl Default for RefreshConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
 pub struct ProtocolConfig {
-    #[serde(default = "default_true")]
-    pub init_on_connect: bool,
-}
-
-impl Default for ProtocolConfig {
-    fn default() -> Self {
-        Self {
-            init_on_connect: false, // tested, connecting without init is fine.
-        }
-    }
+    pub init_on_connect: bool, // tested, default to false is fine.
 }
 
 pub fn resolve_config_path(args: impl IntoIterator<Item = OsString>) -> Result<PathBuf> {
@@ -205,7 +283,10 @@ fn default_true() -> bool {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{SourceConfig, default_config_path};
+    use config::{Config, File, FileFormat};
+    use log::LevelFilter;
+
+    use super::{LoggingConfig, SourceConfig, default_config_path};
 
     #[test]
     fn default_config_search_order_prefers_toml_then_ron_then_corn() {
@@ -255,5 +336,40 @@ mod tests {
             rotate_degrees: 45,
         };
         assert!(source.rotation().is_err());
+    }
+
+    #[test]
+    fn logging_config_defaults_to_info_with_color() {
+        let logging = LoggingConfig::default();
+
+        assert_eq!(logging.level.into_level_filter(), LevelFilter::Info);
+        assert!(logging.color);
+    }
+
+    #[test]
+    fn log_level_deserializes_standard_values() {
+        let parsed: LoggingConfig = Config::builder()
+            .add_source(File::from_str(
+                "level = \"debug\"\ncolor = false\n",
+                FileFormat::Toml,
+            ))
+            .build()
+            .unwrap()
+            .try_deserialize()
+            .unwrap();
+
+        assert_eq!(parsed.level.into_level_filter(), LevelFilter::Debug);
+        assert!(!parsed.color);
+    }
+
+    #[test]
+    fn log_level_rejects_invalid_values() {
+        let parsed = Config::builder()
+            .add_source(File::from_str("level = \"verbose\"\n", FileFormat::Toml))
+            .build()
+            .unwrap()
+            .try_deserialize::<LoggingConfig>();
+
+        assert!(parsed.is_err());
     }
 }

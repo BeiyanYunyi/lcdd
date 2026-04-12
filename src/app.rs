@@ -12,6 +12,7 @@ use log::{debug, info, warn};
 use crate::config::{ConfigReloadOutcome, RuntimeState, load_config, resolve_config_path};
 use crate::device::DeviceSession;
 use crate::image::FrameSource;
+use crate::logging;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConnectedLoopOutcome {
@@ -31,6 +32,7 @@ pub fn run() -> Result<()> {
     let config_bytes = fs::read(&config_path)
         .with_context(|| format!("failed to read config file {}", config_path.display()))?;
     let config = load_config(&config_path)?;
+    logging::init(&config.logging)?;
     info!("loaded config from {}", config_path.display());
 
     let state = RuntimeState::new(config_path, config, config_bytes)?;

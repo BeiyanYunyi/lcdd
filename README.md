@@ -117,6 +117,10 @@ interface_init = 0
 interface_bulk = 1
 # serial = "A247392SS000000"
 
+[logging]
+level = "info"
+color = true
+
 [source]
 path = "./image.jpg"
 rotate_degrees = 0
@@ -148,6 +152,7 @@ Behavior summary:
 - keeps re-uploading the image so the LCD does not clear itself
 - watches the file and reloads it when it changes
 - watches the config file and live-applies valid updates
+- live-applies logging level and color changes from config reloads
 - retries automatically if the cooler disconnects or re-enumerates
 
 ## Python Prototype Tools

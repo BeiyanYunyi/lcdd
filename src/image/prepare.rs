@@ -14,8 +14,9 @@ const JPEG_QUALITIES: [u8; 16] = [
     95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30, 25, 20,
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Rotation {
+    #[default]
     Deg0,
     Deg90,
     Deg180,
@@ -40,12 +41,6 @@ impl Rotation {
             Self::Deg180 => image.rotate180(),
             Self::Deg270 => image.rotate270(),
         }
-    }
-}
-
-impl Default for Rotation {
-    fn default() -> Self {
-        Self::Deg0
     }
 }
 

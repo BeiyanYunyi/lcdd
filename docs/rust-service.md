@@ -107,7 +107,7 @@ If a JPEG exceeds this, fail with a clear validation error instead of inventing 
 
 - discover config from the current working directory, unless `--config <path>` is provided
 - supported config formats: `toml`, `ron`, `corn`
-- initialize logging with `env_logger`
+- initialize logging with `fern`
 - load and validate the source JPEG, including a conservative compatibility check for the cooler decoder
 - keep retrying cooler discovery if the device is not present
 - log retry events with `warn!`
@@ -171,6 +171,10 @@ product_id = 0x1ca9
 interface_init = 0
 interface_bulk = 1
 # serial = "A247392SS000000"
+
+[logging]
+level = "info"
+color = true
 
 [source]
 path = "./image.jpg"
@@ -250,7 +254,7 @@ Planned dependencies:
 - `config` with `toml`, `ron`, and `corn` support
 - `hidapi` for HID discovery and device I/O
 - `jpeg-decoder` for JPEG validation
-- `log` and `env_logger` for runtime logging
+- `log` and `fern` for runtime logging
 - `ctrlc` for shutdown handling
 
 ## Acceptance Criteria
