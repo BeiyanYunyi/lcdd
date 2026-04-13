@@ -122,7 +122,7 @@ If a JPEG exceeds this, fail with a clear validation error instead of inventing 
 - continue re-uploading forever
 - if `refresh.interval_ms = 0`, re-upload continuously with no extra inter-cycle sleep
 - if the source file changes, reload and validate it, then use the new image on future uploads
-- if the dashboard overlay is enabled, rerender metrics on `dashboard.render_interval_ms` while reusing the latest prepared frame between renders
+- if one or more `dashboard.slots` are configured, rerender metrics on `dashboard.render_interval_ms` while reusing the latest prepared frame between renders
 
 ### Failure handling
 
@@ -199,7 +199,7 @@ retry_delay_ms = 1000
 reload_check_interval_ms = 500
 
 [protocol]
-init_on_connect = true
+init_on_connect = false
 ```
 
 ### Semantics
@@ -208,7 +208,7 @@ init_on_connect = true
 - `source.path` is always the background image path
 - the runtime normalizes the source image to `320x320` before upload
 - `refresh.interval_ms = 0` means continuous looping
-- `protocol.init_on_connect = true` is the default and expected mode
+- `protocol.init_on_connect = false` is fine for my current cooler
 - `dashboard.slots` accepts `0..=4` configured slots
 - supported built-in slot metrics are `cpu_usage_percent`, `cpu_temperature`, `memory_used_percent`, and `time`
 - dashboard layout provides 4 fixed stacked slot positions with title and subtitle on the left and data on the right
@@ -232,16 +232,16 @@ Define a small source trait now so future image generators can reuse the sender 
 
 V1 ships one implementation:
 
-- watched file source
+- `ImageSource`, which always watches the background image file and optionally renders a live overlay when `dashboard.slots` is non-empty
 
 Responsibilities:
 
-- load file bytes
-- validate JPEG format
-- validate `320x320`
-- detect file changes
-- rebuild packetized payload on successful reload
-- keep the last valid image if a reload fails validation
+- load background image bytes
+- validate and normalize the background image to the LCD-safe format
+- detect background file changes
+- rebuild the prepared JPEG on successful background reload
+- keep the last valid image if a background reload fails validation
+- rerender overlay content on `dashboard.render_interval_ms` only when slots are configured
 
 ### Packetizer
 

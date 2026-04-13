@@ -13,8 +13,8 @@ use crate::config::{
     DashboardConfig, DashboardMetric, DashboardSlot, TemperatureUnit, TimeFormat,
 };
 use crate::image::{
-    FrameSource, PrepareOptions, PreparedImage, RefreshOutcome, load_normalized_image_without_rotation,
-    prepare_dynamic_image,
+    FrameSource, PrepareOptions, PreparedImage, RefreshOutcome,
+    load_normalized_image_without_rotation, prepare_dynamic_image,
 };
 const PANEL_MARGIN: u32 = 10;
 const PANEL_GAP: u32 = 6;
@@ -29,21 +29,21 @@ const DATA_SCALE: u32 = 3;
 const TITLE_SCALE: u32 = 2;
 const SUBTITLE_SCALE: u32 = 1;
 
-pub struct DashboardSource {
+pub struct ImageSource {
     path: PathBuf,
     reload_interval: Duration,
     render_interval: Duration,
     next_background_check_at: Instant,
-    next_render_at: Instant,
+    next_render_at: Option<Instant>,
     last_source_bytes: Vec<u8>,
     background: DynamicImage,
     rotation: crate::image::Rotation,
     renderer: DashboardRenderer,
-    collector: MetricCollector,
+    collector: Option<MetricCollector>,
     current: PreparedImage,
 }
 
-impl DashboardSource {
+impl ImageSource {
     pub fn new(
         path: PathBuf,
         reload_interval: Duration,
@@ -55,10 +55,13 @@ impl DashboardSource {
             .with_context(|| format!("failed to read image file {}", path.display()))?;
         let background = load_normalized_image_without_rotation(&path, &source_bytes)?;
         let renderer = DashboardRenderer::new(dashboard);
-        let mut collector = MetricCollector::new();
-        let rendered = prepare_options
-            .rotation()
-            .apply(renderer.render(&background, &collector.collect()));
+        let mut collector = renderer
+            .has_overlay()
+            .then(MetricCollector::new);
+        let rendered = prepare_options.rotation().apply(renderer.render(
+            &background,
+            collector.as_mut().map(MetricCollector::collect),
+        ));
         let current = prepare_dynamic_image(path.clone(), rendered)?;
 
         Ok(Self {
@@ -66,7 +69,9 @@ impl DashboardSource {
             reload_interval,
             render_interval,
             next_background_check_at: Instant::now() + reload_interval,
-            next_render_at: Instant::now() + render_interval,
+            next_render_at: renderer
+                .has_overlay()
+                .then(|| Instant::now() + render_interval),
             last_source_bytes: source_bytes,
             background,
             rotation: prepare_options.rotation(),
@@ -92,12 +97,12 @@ impl DashboardSource {
             Ok(next) => {
                 self.last_source_bytes = candidate;
                 self.background = next;
-                info!("reloaded dashboard background {}", self.path.display());
+                info!("reloaded image {}", self.path.display());
                 Ok(true)
             }
             Err(error) => {
                 warn!(
-                    "ignoring invalid updated dashboard background {}: {error:#}",
+                    "ignoring invalid updated image {}: {error:#}",
                     self.path.display()
                 );
                 Ok(false)
@@ -106,23 +111,29 @@ impl DashboardSource {
     }
 
     fn rerender(&mut self) -> Result<()> {
-        let rendered = self
-            .rotation
-            .apply(self.renderer.render(&self.background, &self.collector.collect()));
+        let rendered = self.rotation.apply(
+            self.renderer
+                .render(&self.background, self.collector.as_mut().map(MetricCollector::collect)),
+        );
         self.current = prepare_dynamic_image(self.path.clone(), rendered)?;
-        self.next_render_at = Instant::now() + self.render_interval;
+        if self.renderer.has_overlay() {
+            self.next_render_at = Some(Instant::now() + self.render_interval);
+        }
         Ok(())
     }
 }
 
-impl FrameSource for DashboardSource {
+impl FrameSource for ImageSource {
     fn current(&self) -> &PreparedImage {
         &self.current
     }
 
     fn refresh_if_changed(&mut self) -> Result<RefreshOutcome<'_>> {
         let background_changed = self.reload_background_if_changed()?;
-        let should_render = background_changed || Instant::now() >= self.next_render_at;
+        let should_render = background_changed
+            || self
+                .next_render_at
+                .is_some_and(|next_render_at| Instant::now() >= next_render_at);
         if !should_render {
             return Ok(RefreshOutcome::Unchanged);
         }
@@ -132,16 +143,12 @@ impl FrameSource for DashboardSource {
             Ok(()) => Ok(RefreshOutcome::ContentUpdated),
             Err(error) => {
                 warn!(
-                    "ignoring failed dashboard rerender for {}: {error:#}",
+                    "ignoring failed image rerender for {}: {error:#}",
                     self.path.display()
                 );
                 Ok(RefreshOutcome::Unchanged)
             }
         }
-    }
-
-    fn mode_name(&self) -> &'static str {
-        "dashboard"
     }
 }
 
@@ -161,8 +168,19 @@ impl DashboardRenderer {
         }
     }
 
-    fn render(&self, background: &DynamicImage, metrics: &CollectedMetrics) -> DynamicImage {
+    fn has_overlay(&self) -> bool {
+        !self.slots.is_empty()
+    }
+
+    fn render(
+        &self,
+        background: &DynamicImage,
+        metrics: Option<CollectedMetrics>,
+    ) -> DynamicImage {
         let mut canvas = background.to_rgba8();
+        if self.slots.is_empty() {
+            return DynamicImage::ImageRgba8(canvas);
+        }
         let width = canvas.width();
         let height = canvas.height();
         let available_height = height
@@ -200,7 +218,8 @@ impl DashboardRenderer {
                 &slot.subtitle,
             );
 
-            let data = self.render_metric(slot.metric, metrics);
+            let data =
+                self.render_metric(slot.metric, &metrics.expect("overlay metrics missing"));
             let data_width = text_width(&data, DATA_SCALE);
             let data_x = width
                 .saturating_sub(PANEL_MARGIN + PANEL_PADDING_X)
@@ -390,7 +409,7 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        BASIC_FONTS, CollectedMetrics, DashboardRenderer, DATA_SCALE, DashboardSource,
+        BASIC_FONTS, CollectedMetrics, DashboardRenderer, DATA_SCALE, ImageSource,
         MetricCollector, PANEL_GAP, PANEL_MARGIN, draw_glyph, format_percent,
         format_temperature, format_time, glyph_height,
     };
@@ -433,12 +452,12 @@ mod tests {
         let renderer = DashboardRenderer::new(sample_dashboard_config());
         let rendered = renderer.render(
             &background,
-            &CollectedMetrics {
+            Some(CollectedMetrics {
                 cpu_usage_percent: Some(37.0),
                 cpu_temperature_c: Some(61.0),
                 memory_used_percent: Some(54.0),
                 time: NaiveTime::from_hms_opt(14, 37, 0).unwrap(),
-            },
+            }),
         );
 
         assert_eq!(
@@ -462,7 +481,7 @@ mod tests {
             slots: Vec::new(),
         });
 
-        let rendered = renderer.render(&background, &sample_metrics());
+        let rendered = renderer.render(&background, Some(sample_metrics()));
 
         assert_eq!(rendered.to_rgba8(), background.to_rgba8());
     }
@@ -481,7 +500,9 @@ mod tests {
             ],
         });
 
-        let rendered = renderer.render(&background, &sample_metrics()).to_rgba8();
+        let rendered = renderer
+            .render(&background, Some(sample_metrics()))
+            .to_rgba8();
         let row_height = row_height_for_test(rendered.height());
         let first_row_y = PANEL_MARGIN + row_height / 2;
         let second_row_y = PANEL_MARGIN + row_height + PANEL_GAP + row_height / 2;
@@ -503,33 +524,6 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_source_reports_mode_name() {
-        let temp = std::env::temp_dir().join(format!(
-            "lcdd-dashboard-test-{}-{}",
-            std::process::id(),
-            "mode-name"
-        ));
-        let _ = std::fs::remove_dir_all(&temp);
-        std::fs::create_dir_all(&temp).unwrap();
-
-        let path = temp.join("image.jpg");
-        std::fs::write(&path, include_bytes!("../assets/test.jpg")).unwrap();
-
-        let source = DashboardSource::new(
-            path,
-            Duration::from_millis(500),
-            Duration::from_millis(1000),
-            PrepareOptions::default(),
-            sample_dashboard_config(),
-        )
-        .unwrap();
-
-        assert_eq!(source.mode_name(), "dashboard");
-
-        let _ = std::fs::remove_dir_all(&temp);
-    }
-
-    #[test]
     fn dashboard_metric_rerender_is_content_update() {
         let temp = std::env::temp_dir().join(format!(
             "lcdd-dashboard-test-{}-{}",
@@ -542,7 +536,7 @@ mod tests {
         let path = temp.join("image.jpg");
         std::fs::write(&path, include_bytes!("../assets/test.jpg")).unwrap();
 
-        let mut source = DashboardSource::new(
+        let mut source = ImageSource::new(
             path,
             Duration::from_secs(60),
             Duration::ZERO,
@@ -572,7 +566,7 @@ mod tests {
             time: NaiveTime::from_hms_opt(14, 37, 0).unwrap(),
         };
 
-        let unrotated = renderer.render(&background, &metrics);
+        let unrotated = renderer.render(&background, Some(metrics));
         let rotated_after_composite = crate::image::Rotation::Deg90.apply(unrotated.clone());
         let expected = DynamicImage::ImageRgba8(unrotated.to_rgba8()).rotate90();
 

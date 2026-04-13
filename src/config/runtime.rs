@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use log::{error, info};
 
 use super::{AppConfig, load_config};
-use crate::image::{DashboardSource, FrameSource, PrepareOptions, WatchedFileSource};
+use crate::image::{FrameSource, ImageSource, PrepareOptions};
 use crate::logging;
 
 pub struct RuntimeState {
@@ -156,20 +156,12 @@ impl RuntimeState {
         let reload_interval = Duration::from_millis(config.refresh.reload_check_interval_ms);
         let prepare_options = PrepareOptions::new(config.source.rotation()?);
 
-        if !config.dashboard.slots.is_empty() {
-            return Ok(Box::new(DashboardSource::build(
-                config.source.path.clone(),
-                reload_interval,
-                Duration::from_millis(config.dashboard.render_interval_ms),
-                prepare_options,
-                config.dashboard.clone(),
-            )?));
-        }
-
-        Ok(Box::new(WatchedFileSource::new(
+        Ok(Box::new(ImageSource::new(
             config.source.path.clone(),
             reload_interval,
+            Duration::from_millis(config.dashboard.render_interval_ms),
             prepare_options,
+            config.dashboard.clone(),
         )?))
     }
 
@@ -406,30 +398,37 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_config_rebuilds_source_in_dashboard_mode() {
+    fn dashboard_config_rebuilds_source() {
         let temp = test_dir("dashboard-source-mode");
         let image_path = write_test_image(&temp, "image.jpg");
         let mut config = make_config(&image_path);
         config.dashboard = sample_dashboard_config();
+        config.dashboard.render_interval_ms = 0;
         let config_path = temp.join("config.toml");
 
-        let state = RuntimeState::new(config_path, config, Vec::new()).unwrap();
+        let mut state = RuntimeState::new(config_path, config, Vec::new()).unwrap();
 
-        assert_eq!(state.source().mode_name(), "dashboard");
+        assert!(matches!(
+            state.source_mut().refresh_if_changed().unwrap(),
+            crate::image::RefreshOutcome::ContentUpdated
+        ));
 
         let _ = fs::remove_dir_all(temp);
     }
 
     #[test]
-    fn empty_dashboard_slots_keep_file_source_mode() {
-        let temp = test_dir("file-source-mode");
+    fn empty_dashboard_slots_keep_background_only_behavior() {
+        let temp = test_dir("background-only-source");
         let image_path = write_test_image(&temp, "image.jpg");
         let config = make_config(&image_path);
         let config_path = temp.join("config.toml");
 
-        let state = RuntimeState::new(config_path, config, Vec::new()).unwrap();
+        let mut state = RuntimeState::new(config_path, config, Vec::new()).unwrap();
 
-        assert_eq!(state.source().mode_name(), "file");
+        assert!(matches!(
+            state.source_mut().refresh_if_changed().unwrap(),
+            crate::image::RefreshOutcome::Unchanged
+        ));
 
         let _ = fs::remove_dir_all(temp);
     }

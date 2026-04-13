@@ -144,7 +144,7 @@ retry_delay_ms = 1000
 reload_check_interval_ms = 500
 
 [protocol]
-init_on_connect = true
+init_on_connect = false # false is fine for my current cooler
 ```
 
 ### Running The Service

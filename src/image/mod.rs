@@ -7,8 +7,8 @@ mod source;
 use std::path::{Path, PathBuf};
 
 pub use prepare::{PrepareOptions, Rotation};
-pub use dashboard::DashboardSource;
-pub use source::{FrameSource, RefreshOutcome, WatchedFileSource};
+pub use dashboard::ImageSource;
+pub use source::{FrameSource, RefreshOutcome};
 
 #[derive(Debug, Clone)]
 pub struct PreparedImage {
@@ -65,14 +65,6 @@ pub(crate) fn packetize_jpeg(
     bytes: &[u8],
 ) -> anyhow::Result<Vec<[u8; crate::protocol::HID_PACKET_LEN]>> {
     packetize::packetize_jpeg(bytes)
-}
-
-pub(crate) fn prepare_image_bytes(
-    path: &Path,
-    bytes: &[u8],
-    options: PrepareOptions,
-) -> anyhow::Result<PreparedImage> {
-    prepare::prepare_image_bytes(path, bytes, options)
 }
 
 pub(crate) fn prepare_dynamic_image(

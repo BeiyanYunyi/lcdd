@@ -1,13 +1,6 @@
-use std::fs;
-use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use anyhow::Result;
 
-use anyhow::{Context, Result};
-use log::{info, warn};
-
-use crate::config::DashboardConfig;
-use crate::image::dashboard::DashboardSource;
-use crate::image::{PrepareOptions, PreparedImage, prepare_image_bytes};
+use crate::image::PreparedImage;
 
 #[derive(Debug, Clone, Copy)]
 pub enum RefreshOutcome<'a> {
@@ -19,109 +12,19 @@ pub enum RefreshOutcome<'a> {
 pub trait FrameSource {
     fn current(&self) -> &PreparedImage;
     fn refresh_if_changed(&mut self) -> Result<RefreshOutcome<'_>>;
-    fn mode_name(&self) -> &'static str;
-}
-
-pub struct WatchedFileSource {
-    path: PathBuf,
-    reload_interval: Duration,
-    prepare_options: PrepareOptions,
-    next_check_at: Instant,
-    last_source_bytes: Vec<u8>,
-    current: PreparedImage,
-}
-
-impl WatchedFileSource {
-    pub fn new(
-        path: PathBuf,
-        reload_interval: Duration,
-        prepare_options: PrepareOptions,
-    ) -> Result<Self> {
-        let source_bytes = fs::read(&path)
-            .with_context(|| format!("failed to read image file {}", path.display()))?;
-        let current = prepare_image_bytes(&path, &source_bytes, prepare_options)?;
-        Ok(Self {
-            path,
-            reload_interval,
-            prepare_options,
-            next_check_at: Instant::now() + reload_interval,
-            last_source_bytes: source_bytes,
-            current,
-        })
-    }
-
-}
-
-impl FrameSource for WatchedFileSource {
-    fn current(&self) -> &PreparedImage {
-        &self.current
-    }
-
-    fn refresh_if_changed(&mut self) -> Result<RefreshOutcome<'_>> {
-        if Instant::now() < self.next_check_at {
-            return Ok(RefreshOutcome::Unchanged);
-        }
-        self.next_check_at = Instant::now() + self.reload_interval;
-
-        let candidate = fs::read(&self.path)
-            .with_context(|| format!("failed to read image source {}", self.path.display()))?;
-        if candidate == self.last_source_bytes {
-            return Ok(RefreshOutcome::Unchanged);
-        }
-
-        match prepare_image_bytes(&self.path, &candidate, self.prepare_options) {
-            Ok(next) => {
-                info!(
-                    "reloaded image {} ({} bytes, {} packets)",
-                    next.source_path().display(),
-                    next.jpeg_bytes().len(),
-                    next.packets().len()
-                );
-                self.last_source_bytes = candidate;
-                self.current = next;
-                Ok(RefreshOutcome::SourceReloaded(&self.current))
-            }
-            Err(error) => {
-                warn!(
-                    "ignoring invalid updated image {}: {error:#}",
-                    self.path.display()
-                );
-                Ok(RefreshOutcome::Unchanged)
-            }
-        }
-    }
-
-    fn mode_name(&self) -> &'static str {
-        "file"
-    }
-}
-
-impl DashboardSource {
-    pub fn build(
-        path: PathBuf,
-        reload_interval: Duration,
-        render_interval: Duration,
-        prepare_options: PrepareOptions,
-        dashboard: DashboardConfig,
-    ) -> Result<Self> {
-        DashboardSource::new(
-            path,
-            reload_interval,
-            render_interval,
-            prepare_options,
-            dashboard,
-        )
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use crate::image::{FrameSource, PrepareOptions, RefreshOutcome, WatchedFileSource};
+    use crate::config::{
+        DashboardConfig, DashboardMetric, DashboardSlot, TemperatureUnit, TimeFormat,
+    };
+    use crate::image::{FrameSource, ImageSource, PrepareOptions, RefreshOutcome};
 
     #[test]
-    fn watched_file_source_keeps_last_valid_image_on_invalid_reload() {
+    fn image_source_keeps_last_valid_image_on_invalid_reload_without_overlay() {
         let temp = std::env::temp_dir().join(format!(
             "lcdd-source-test-{}-{}",
             std::process::id(),
@@ -133,9 +36,14 @@ mod tests {
         let path = temp.join("image.jpg");
         std::fs::write(&path, include_bytes!("../assets/test.jpg")).unwrap();
 
-        let mut source =
-            WatchedFileSource::new(path.clone(), Duration::ZERO, PrepareOptions::default())
-                .unwrap();
+        let mut source = ImageSource::new(
+            path.clone(),
+            Duration::ZERO,
+            Duration::from_secs(60),
+            PrepareOptions::default(),
+            DashboardConfig::default(),
+        )
+        .unwrap();
         let original = source.current().jpeg_bytes().to_vec();
 
         std::fs::write(&path, b"not-a-jpeg").unwrap();
@@ -150,11 +58,11 @@ mod tests {
     }
 
     #[test]
-    fn watched_file_source_reports_mode_name() {
+    fn image_source_without_overlay_does_not_emit_content_updates() {
         let temp = std::env::temp_dir().join(format!(
             "lcdd-source-test-{}-{}",
             std::process::id(),
-            "mode-name"
+            "no-overlay-refresh"
         ));
         let _ = std::fs::remove_dir_all(&temp);
         std::fs::create_dir_all(&temp).unwrap();
@@ -162,16 +70,25 @@ mod tests {
         let path = temp.join("image.jpg");
         std::fs::write(&path, include_bytes!("../assets/test.jpg")).unwrap();
 
-        let source =
-            WatchedFileSource::new(path, Duration::ZERO, PrepareOptions::default()).unwrap();
+        let mut source = ImageSource::new(
+            path,
+            Duration::from_secs(60),
+            Duration::ZERO,
+            PrepareOptions::default(),
+            DashboardConfig::default(),
+        )
+        .unwrap();
 
-        assert_eq!(source.mode_name(), "file");
+        assert!(matches!(
+            source.refresh_if_changed().unwrap(),
+            RefreshOutcome::Unchanged
+        ));
 
         let _ = std::fs::remove_dir_all(&temp);
     }
 
     #[test]
-    fn watched_file_source_reports_source_reload_on_valid_update() {
+    fn image_source_reports_source_reload_on_valid_update_without_overlay() {
         let temp = std::env::temp_dir().join(format!(
             "lcdd-source-test-{}-{}",
             std::process::id(),
@@ -190,9 +107,14 @@ mod tests {
         sample.write_to(&mut png, image::ImageFormat::Png).unwrap();
         std::fs::write(&path, png.into_inner()).unwrap();
 
-        let mut source =
-            WatchedFileSource::new(path.clone(), Duration::ZERO, PrepareOptions::default())
-                .unwrap();
+        let mut source = ImageSource::new(
+            path.clone(),
+            Duration::ZERO,
+            Duration::from_secs(60),
+            PrepareOptions::default(),
+            DashboardConfig::default(),
+        )
+        .unwrap();
 
         let mut next_png = std::io::Cursor::new(Vec::new());
         let next = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
@@ -211,5 +133,52 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn image_source_with_overlay_reports_content_update() {
+        let temp = std::env::temp_dir().join(format!(
+            "lcdd-source-test-{}-{}",
+            std::process::id(),
+            "overlay-refresh"
+        ));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).unwrap();
+
+        let path = temp.join("image.jpg");
+        std::fs::write(&path, include_bytes!("../assets/test.jpg")).unwrap();
+
+        let mut source = ImageSource::new(
+            path,
+            Duration::from_secs(60),
+            Duration::ZERO,
+            PrepareOptions::default(),
+            sample_dashboard_config(),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            source.refresh_if_changed().unwrap(),
+            RefreshOutcome::ContentUpdated
+        ));
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    fn sample_dashboard_config() -> DashboardConfig {
+        DashboardConfig {
+            render_interval_ms: 1000,
+            time_format: TimeFormat::TwentyFourHour,
+            temperature_unit: TemperatureUnit::Celsius,
+            slots: vec![slot("CPU", "usage", DashboardMetric::CpuUsagePercent)],
+        }
+    }
+
+    fn slot(title: &str, subtitle: &str, metric: DashboardMetric) -> DashboardSlot {
+        DashboardSlot {
+            title: title.to_string(),
+            subtitle: subtitle.to_string(),
+            metric,
+        }
     }
 }
