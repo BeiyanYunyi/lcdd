@@ -1,4 +1,5 @@
 mod dashboard;
+mod dashboard_font;
 mod jpeg;
 mod packetize;
 mod prepare;
@@ -6,8 +7,8 @@ mod source;
 
 use std::path::{Path, PathBuf};
 
-pub use prepare::{PrepareOptions, Rotation};
 pub use dashboard::ImageSource;
+pub use prepare::{PrepareOptions, Rotation};
 pub use source::{FrameSource, RefreshOutcome};
 
 #[derive(Debug, Clone)]

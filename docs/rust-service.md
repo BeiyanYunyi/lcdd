@@ -186,6 +186,9 @@ rotate_degrees = 0
 render_interval_ms = 1000
 time_format = "24h"
 temperature_unit = "celsius"
+# font_family = "Noto Sans"
+# font_path = "/path/to/NotoSansCJK-Regular.ttc"
+# debug_output_path = "./out/dashboard-debug.png"
 
 [[dashboard.slots]]
 title = "CPU"
@@ -212,6 +215,10 @@ init_on_connect = false
 - `dashboard.slots` accepts `0..=4` configured slots
 - supported built-in slot metrics are `cpu_usage_percent`, `cpu_temperature`, `memory_used_percent`, and `time`
 - dashboard layout provides 4 fixed stacked slot positions with title and subtitle on the left and data on the right
+- dashboard text uses `font-kit` with UTF-8 support for Latin and common CJK text, but without complex-script shaping
+- `dashboard.font_path`, when set, overrides `dashboard.font_family`
+- if neither font setting is provided, the runtime tries a best-effort sans-serif fallback from system fonts
+- if `dashboard.debug_output_path` is set, the runtime writes the final composited frame to that path before JPEG upload
 - if fewer than 4 slots are configured, they render in the top-most positions
 - if no slots are configured, the runtime keeps background-image-only behavior
 
@@ -272,6 +279,7 @@ Planned dependencies:
 - `serde` for config deserialization
 - `config` with `toml`, `ron`, and `corn` support
 - `hidapi` for HID discovery and device I/O
+- `font-kit` for dashboard font loading, metrics, and glyph rasterization
 - `jpeg-decoder` for JPEG validation
 - `log` and `fern` for runtime logging
 - `ctrlc` for shutdown handling

@@ -478,6 +478,9 @@ mod tests {
             render_interval_ms: 1000,
             time_format: TimeFormat::TwentyFourHour,
             temperature_unit: TemperatureUnit::Celsius,
+            font_path: None,
+            font_family: None,
+            debug_output_path: None,
             slots: vec![
                 slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
                 slot("CPU", "temp", DashboardMetric::CpuTemperature),

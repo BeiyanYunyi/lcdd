@@ -92,7 +92,10 @@ pub(crate) fn load_normalized_image(
     load_normalized_image_with_rotation(path, bytes, options.rotation)
 }
 
-pub(crate) fn load_normalized_image_without_rotation(path: &Path, bytes: &[u8]) -> Result<DynamicImage> {
+pub(crate) fn load_normalized_image_without_rotation(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<DynamicImage> {
     load_normalized_image_with_rotation(path, bytes, Rotation::Deg0)
 }
 

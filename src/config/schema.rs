@@ -174,6 +174,12 @@ pub struct DashboardConfig {
     #[serde(default)]
     pub temperature_unit: TemperatureUnit,
     #[serde(default)]
+    pub font_path: Option<PathBuf>,
+    #[serde(default)]
+    pub font_family: Option<String>,
+    #[serde(default)]
+    pub debug_output_path: Option<PathBuf>,
+    #[serde(default)]
     pub slots: Vec<DashboardSlot>,
 }
 
@@ -199,6 +205,12 @@ impl DashboardConfig {
                 "dashboard.slots[{index}].subtitle must not be empty"
             );
         }
+        if let Some(font_family) = &self.font_family {
+            ensure!(
+                !font_family.trim().is_empty(),
+                "dashboard.font_family must not be empty when set"
+            );
+        }
 
         Ok(())
     }
@@ -210,6 +222,9 @@ impl Default for DashboardConfig {
             render_interval_ms: default_dashboard_render_interval_ms(),
             time_format: TimeFormat::default(),
             temperature_unit: TemperatureUnit::default(),
+            font_path: None,
+            font_family: None,
+            debug_output_path: None,
             slots: Vec::new(),
         }
     }
@@ -477,6 +492,9 @@ mod tests {
         assert_eq!(dashboard.render_interval_ms, 1000);
         assert_eq!(dashboard.time_format, TimeFormat::TwentyFourHour);
         assert_eq!(dashboard.temperature_unit, TemperatureUnit::Celsius);
+        assert_eq!(dashboard.font_path, None);
+        assert_eq!(dashboard.font_family, None);
+        assert_eq!(dashboard.debug_output_path, None);
         assert!(dashboard.slots.is_empty());
         assert!(dashboard.validate().is_ok());
     }
@@ -487,6 +505,9 @@ mod tests {
             render_interval_ms: 1000,
             time_format: TimeFormat::TwentyFourHour,
             temperature_unit: TemperatureUnit::Celsius,
+            font_path: None,
+            font_family: None,
+            debug_output_path: None,
             slots: Vec::new(),
         };
 
@@ -499,6 +520,9 @@ mod tests {
             render_interval_ms: 1000,
             time_format: TimeFormat::TwentyFourHour,
             temperature_unit: TemperatureUnit::Celsius,
+            font_path: None,
+            font_family: None,
+            debug_output_path: None,
             slots: vec![
                 slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
                 slot("CPU", "temp", DashboardMetric::CpuTemperature),
@@ -515,6 +539,9 @@ mod tests {
             render_interval_ms: 1000,
             time_format: TimeFormat::TwentyFourHour,
             temperature_unit: TemperatureUnit::Celsius,
+            font_path: None,
+            font_family: None,
+            debug_output_path: None,
             slots: vec![
                 slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
                 slot("CPU", "temp", DashboardMetric::CpuTemperature),
@@ -533,12 +560,75 @@ mod tests {
             render_interval_ms: 1000,
             time_format: TimeFormat::TwentyFourHour,
             temperature_unit: TemperatureUnit::Celsius,
+            font_path: None,
+            font_family: None,
+            debug_output_path: None,
             slots: vec![
                 slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
                 slot("CPU", "temp", DashboardMetric::CpuTemperature),
                 slot("MEM", "used", DashboardMetric::MemoryUsedPercent),
                 slot("TIME", "local", DashboardMetric::Time),
             ],
+        };
+
+        assert!(dashboard.validate().is_ok());
+    }
+
+    #[test]
+    fn dashboard_accepts_font_family() {
+        let dashboard = DashboardConfig {
+            render_interval_ms: 1000,
+            time_format: TimeFormat::TwentyFourHour,
+            temperature_unit: TemperatureUnit::Celsius,
+            font_path: None,
+            font_family: Some("Noto Sans".to_string()),
+            debug_output_path: None,
+            slots: vec![slot("CPU", "usage", DashboardMetric::CpuUsagePercent)],
+        };
+
+        assert!(dashboard.validate().is_ok());
+    }
+
+    #[test]
+    fn dashboard_accepts_font_path() {
+        let dashboard = DashboardConfig {
+            render_interval_ms: 1000,
+            time_format: TimeFormat::TwentyFourHour,
+            temperature_unit: TemperatureUnit::Celsius,
+            font_path: Some(PathBuf::from("/tmp/font.ttf")),
+            font_family: None,
+            debug_output_path: None,
+            slots: vec![slot("CPU", "usage", DashboardMetric::CpuUsagePercent)],
+        };
+
+        assert!(dashboard.validate().is_ok());
+    }
+
+    #[test]
+    fn dashboard_rejects_empty_font_family() {
+        let dashboard = DashboardConfig {
+            render_interval_ms: 1000,
+            time_format: TimeFormat::TwentyFourHour,
+            temperature_unit: TemperatureUnit::Celsius,
+            font_path: None,
+            font_family: Some("   ".to_string()),
+            debug_output_path: None,
+            slots: vec![slot("CPU", "usage", DashboardMetric::CpuUsagePercent)],
+        };
+
+        assert!(dashboard.validate().is_err());
+    }
+
+    #[test]
+    fn dashboard_accepts_debug_output_path() {
+        let dashboard = DashboardConfig {
+            render_interval_ms: 1000,
+            time_format: TimeFormat::TwentyFourHour,
+            temperature_unit: TemperatureUnit::Celsius,
+            font_path: None,
+            font_family: None,
+            debug_output_path: Some(PathBuf::from("/tmp/dashboard-debug.png")),
+            slots: vec![slot("CPU", "usage", DashboardMetric::CpuUsagePercent)],
         };
 
         assert!(dashboard.validate().is_ok());

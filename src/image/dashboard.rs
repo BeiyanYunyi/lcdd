@@ -4,14 +4,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use chrono::{Local, Timelike};
-use font8x8::{BASIC_FONTS, UnicodeFonts};
 use image::{DynamicImage, Pixel, Rgba, RgbaImage};
 use log::{info, warn};
 use sysinfo::{Components, CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
-use crate::config::{
-    DashboardConfig, DashboardMetric, DashboardSlot, TemperatureUnit, TimeFormat,
-};
+use crate::config::{DashboardConfig, DashboardMetric, DashboardSlot, TemperatureUnit, TimeFormat};
+use crate::image::dashboard_font::DashboardFont;
 use crate::image::{
     FrameSource, PrepareOptions, PreparedImage, RefreshOutcome,
     load_normalized_image_without_rotation, prepare_dynamic_image,
@@ -25,9 +23,9 @@ const DATA_COLOR: [u8; 4] = [255, 255, 255, 255];
 const PANEL_PADDING_X: u32 = 12;
 const TITLE_TOP_PADDING: u32 = 11;
 const SUBTITLE_TOP_PADDING: u32 = 42;
-const DATA_SCALE: u32 = 3;
-const TITLE_SCALE: u32 = 2;
-const SUBTITLE_SCALE: u32 = 1;
+const TITLE_FONT_SIZE: f32 = 20.0;
+const SUBTITLE_FONT_SIZE: f32 = 14.0;
+const DATA_FONT_SIZE: f32 = 32.0;
 
 pub struct ImageSource {
     path: PathBuf,
@@ -39,6 +37,7 @@ pub struct ImageSource {
     background: DynamicImage,
     rotation: crate::image::Rotation,
     renderer: DashboardRenderer,
+    debug_output_path: Option<PathBuf>,
     collector: Option<MetricCollector>,
     current: PreparedImage,
 }
@@ -54,14 +53,14 @@ impl ImageSource {
         let source_bytes = fs::read(&path)
             .with_context(|| format!("failed to read image file {}", path.display()))?;
         let background = load_normalized_image_without_rotation(&path, &source_bytes)?;
-        let renderer = DashboardRenderer::new(dashboard);
-        let mut collector = renderer
-            .has_overlay()
-            .then(MetricCollector::new);
+        let debug_output_path = dashboard.debug_output_path.clone();
+        let renderer = DashboardRenderer::new(dashboard)?;
+        let mut collector = renderer.has_overlay().then(MetricCollector::new);
         let rendered = prepare_options.rotation().apply(renderer.render(
             &background,
             collector.as_mut().map(MetricCollector::collect),
         ));
+        write_debug_frame(debug_output_path.as_deref(), &rendered);
         let current = prepare_dynamic_image(path.clone(), rendered)?;
 
         Ok(Self {
@@ -76,6 +75,7 @@ impl ImageSource {
             background,
             rotation: prepare_options.rotation(),
             renderer,
+            debug_output_path,
             collector,
             current,
         })
@@ -111,10 +111,11 @@ impl ImageSource {
     }
 
     fn rerender(&mut self) -> Result<()> {
-        let rendered = self.rotation.apply(
-            self.renderer
-                .render(&self.background, self.collector.as_mut().map(MetricCollector::collect)),
-        );
+        let rendered = self.rotation.apply(self.renderer.render(
+            &self.background,
+            self.collector.as_mut().map(MetricCollector::collect),
+        ));
+        write_debug_frame(self.debug_output_path.as_deref(), &rendered);
         self.current = prepare_dynamic_image(self.path.clone(), rendered)?;
         if self.renderer.has_overlay() {
             self.next_render_at = Some(Instant::now() + self.render_interval);
@@ -152,31 +153,28 @@ impl FrameSource for ImageSource {
     }
 }
 
-#[derive(Debug, Clone)]
 struct DashboardRenderer {
     time_format: TimeFormat,
     temperature_unit: TemperatureUnit,
     slots: Vec<DashboardSlot>,
+    font: DashboardFont,
 }
 
 impl DashboardRenderer {
-    fn new(config: DashboardConfig) -> Self {
-        Self {
+    fn new(config: DashboardConfig) -> Result<Self> {
+        Ok(Self {
             time_format: config.time_format,
             temperature_unit: config.temperature_unit,
             slots: config.slots,
-        }
+            font: DashboardFont::load(config.font_path, config.font_family)?,
+        })
     }
 
     fn has_overlay(&self) -> bool {
         !self.slots.is_empty()
     }
 
-    fn render(
-        &self,
-        background: &DynamicImage,
-        metrics: Option<CollectedMetrics>,
-    ) -> DynamicImage {
+    fn render(&self, background: &DynamicImage, metrics: Option<CollectedMetrics>) -> DynamicImage {
         let mut canvas = background.to_rgba8();
         if self.slots.is_empty() {
             return DynamicImage::ImageRgba8(canvas);
@@ -201,36 +199,35 @@ impl DashboardRenderer {
 
             let title_x = PANEL_MARGIN + PANEL_PADDING_X;
             let title_y = top + TITLE_TOP_PADDING;
-            draw_text(
+            self.font.draw_text(
                 &mut canvas,
                 title_x,
                 title_y,
-                TITLE_SCALE,
+                TITLE_FONT_SIZE,
                 TITLE_COLOR,
                 &slot.title,
             );
-            draw_text(
+            self.font.draw_text(
                 &mut canvas,
                 title_x,
                 top + SUBTITLE_TOP_PADDING,
-                SUBTITLE_SCALE,
+                SUBTITLE_FONT_SIZE,
                 SUBTITLE_COLOR,
                 &slot.subtitle,
             );
 
-            let data =
-                self.render_metric(slot.metric, &metrics.expect("overlay metrics missing"));
-            let data_width = text_width(&data, DATA_SCALE);
+            let data = self.render_metric(slot.metric, &metrics.expect("overlay metrics missing"));
+            let data_width = self.font.measure_text_width(&data, DATA_FONT_SIZE);
             let data_x = width
                 .saturating_sub(PANEL_MARGIN + PANEL_PADDING_X)
                 .saturating_sub(data_width);
-            let data_height = glyph_height(DATA_SCALE);
+            let data_height = self.font.line_height(DATA_FONT_SIZE);
             let data_y = top + (row_height.saturating_sub(data_height)) / 2;
-            draw_text(
+            self.font.draw_text(
                 &mut canvas,
                 data_x,
                 data_y,
-                DATA_SCALE,
+                DATA_FONT_SIZE,
                 DATA_COLOR,
                 &data,
             );
@@ -317,7 +314,7 @@ fn format_percent(value: Option<f32>) -> String {
 
 fn format_temperature(value_c: Option<f32>, unit: TemperatureUnit) -> String {
     match (value_c, unit) {
-        (Some(value), TemperatureUnit::Celsius) => format!("{}C", value.round() as i32),
+        (Some(value), TemperatureUnit::Celsius) => format!("{}°C", value.round() as i32),
         (None, _) => "--".to_string(),
     }
 }
@@ -336,41 +333,26 @@ fn fill_rect_alpha(image: &mut RgbaImage, x: u32, y: u32, width: u32, height: u3
     }
 }
 
-fn draw_text(image: &mut RgbaImage, x: u32, y: u32, scale: u32, color: [u8; 4], text: &str) {
-    let mut cursor_x = x;
-    for ch in text.chars() {
-        if ch == ' ' {
-            cursor_x += 4 * scale;
-            continue;
-        }
+fn write_debug_frame(path: Option<&std::path::Path>, rendered: &DynamicImage) {
+    let Some(path) = path else {
+        return;
+    };
 
-        if let Some(glyph) = BASIC_FONTS.get(ch) {
-            draw_glyph(image, cursor_x, y, scale, color, glyph);
-        } else if let Some(glyph) = BASIC_FONTS.get('?') {
-            draw_glyph(image, cursor_x, y, scale, color, glyph);
+    if let Some(parent) = path.parent() {
+        if let Err(error) = fs::create_dir_all(parent) {
+            warn!(
+                "failed to create dashboard debug output directory {}: {error:#}",
+                parent.display()
+            );
+            return;
         }
-
-        cursor_x += 9 * scale;
     }
-}
 
-fn draw_glyph(image: &mut RgbaImage, x: u32, y: u32, scale: u32, color: [u8; 4], glyph: [u8; 8]) {
-    for (row, bits) in glyph.into_iter().enumerate() {
-        for col in 0..8u32 {
-            if (bits >> col) & 1 == 0 {
-                continue;
-            }
-
-            for dy in 0..scale {
-                for dx in 0..scale {
-                    let px = x + col * scale + dx;
-                    let py = y + row as u32 * scale + dy;
-                    if px < image.width() && py < image.height() {
-                        blend_pixel(image, px, py, color);
-                    }
-                }
-            }
-        }
+    if let Err(error) = rendered.save(path) {
+        warn!(
+            "failed to write dashboard debug output {}: {error:#}",
+            path.display()
+        );
     }
 }
 
@@ -390,35 +372,21 @@ fn blend_channel(base: u8, over: u8, alpha: f32) -> u8 {
     ((base as f32 * (1.0 - alpha)) + (over as f32 * alpha)).round() as u8
 }
 
-fn text_width(text: &str, scale: u32) -> u32 {
-    if text.is_empty() {
-        return 0;
-    }
-    text.chars()
-        .map(|ch| if ch == ' ' { 4 * scale } else { 9 * scale })
-        .sum::<u32>()
-        .saturating_sub(scale)
-}
-
-fn glyph_height(scale: u32) -> u32 {
-    8 * scale
-}
-
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::time::Duration;
 
     use super::{
-        BASIC_FONTS, CollectedMetrics, DashboardRenderer, DATA_SCALE, ImageSource,
-        MetricCollector, PANEL_GAP, PANEL_MARGIN, draw_glyph, format_percent,
-        format_temperature, format_time, glyph_height,
+        CollectedMetrics, DATA_FONT_SIZE, DashboardRenderer, ImageSource, MetricCollector,
+        PANEL_COLOR, PANEL_GAP, PANEL_MARGIN, PANEL_PADDING_X, TITLE_FONT_SIZE, TITLE_TOP_PADDING,
+        fill_rect_alpha, format_percent, format_temperature, format_time,
     };
     use crate::config::{
         DashboardConfig, DashboardMetric, DashboardSlot, TemperatureUnit, TimeFormat,
     };
-    use crate::image::{FrameSource, PrepareOptions, RefreshOutcome};
+    use crate::image::{FrameSource, PrepareOptions, RefreshOutcome, prepare_dynamic_image};
     use chrono::NaiveTime;
-    use font8x8::UnicodeFonts;
     use image::{DynamicImage, GenericImageView, Rgba, RgbaImage};
 
     #[test]
@@ -431,7 +399,7 @@ mod tests {
     fn temperature_formatting_handles_missing_values() {
         assert_eq!(
             format_temperature(Some(61.2), TemperatureUnit::Celsius),
-            "61C"
+            "61°C"
         );
         assert_eq!(format_temperature(None, TemperatureUnit::Celsius), "--");
     }
@@ -449,7 +417,7 @@ mod tests {
             u32::from(crate::protocol::EXPECTED_JPEG_HEIGHT),
             image::Rgba([20, 30, 40, 255]),
         ));
-        let renderer = DashboardRenderer::new(sample_dashboard_config());
+        let renderer = DashboardRenderer::new(sample_dashboard_config()).unwrap();
         let rendered = renderer.render(
             &background,
             Some(CollectedMetrics {
@@ -467,7 +435,7 @@ mod tests {
                 u32::from(crate::protocol::EXPECTED_JPEG_HEIGHT),
             )
         );
-        assert_eq!(glyph_height(DATA_SCALE), 24);
+        assert!(renderer.font.line_height(DATA_FONT_SIZE) > 0);
     }
 
     #[test]
@@ -478,8 +446,12 @@ mod tests {
             render_interval_ms: 1000,
             time_format: TimeFormat::TwentyFourHour,
             temperature_unit: TemperatureUnit::Celsius,
+            font_path: None,
+            font_family: None,
+            debug_output_path: None,
             slots: Vec::new(),
-        });
+        })
+        .unwrap();
 
         let rendered = renderer.render(&background, Some(sample_metrics()));
 
@@ -494,11 +466,15 @@ mod tests {
             render_interval_ms: 1000,
             time_format: TimeFormat::TwentyFourHour,
             temperature_unit: TemperatureUnit::Celsius,
+            font_path: None,
+            font_family: None,
+            debug_output_path: None,
             slots: vec![
                 slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
                 slot("TIME", "local", DashboardMetric::Time),
             ],
-        });
+        })
+        .unwrap();
 
         let rendered = renderer
             .render(&background, Some(sample_metrics()))
@@ -558,7 +534,7 @@ mod tests {
         let background = DynamicImage::ImageRgba8(RgbaImage::from_fn(320, 320, |x, y| {
             Rgba([x as u8, y as u8, ((x + y) % 255) as u8, 255])
         }));
-        let renderer = DashboardRenderer::new(sample_dashboard_config());
+        let renderer = DashboardRenderer::new(sample_dashboard_config()).unwrap();
         let metrics = CollectedMetrics {
             cpu_usage_percent: Some(37.0),
             cpu_temperature_c: Some(61.0),
@@ -574,30 +550,105 @@ mod tests {
     }
 
     #[test]
-    fn glyph_rasterization_is_not_horizontally_mirrored() {
-        let mut image = RgbaImage::from_pixel(12, 12, Rgba([0, 0, 0, 255]));
-        let glyph = BASIC_FONTS.get('F').unwrap();
+    fn renderer_changes_pixels_inside_title_region() {
+        let background =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(320, 320, Rgba([20, 30, 40, 255])));
+        let renderer = DashboardRenderer::new(sample_dashboard_config()).unwrap();
+        let rendered = renderer
+            .render(&background, Some(sample_metrics()))
+            .to_rgba8();
+        let panel_only =
+            render_panels_only_image(&background, sample_dashboard_config().slots.len());
 
-        draw_glyph(&mut image, 1, 1, 1, [255, 255, 255, 255], glyph);
+        let title = &sample_dashboard_config().slots[0].title;
+        let title_x = PANEL_MARGIN + PANEL_PADDING_X;
+        let title_y = PANEL_MARGIN + TITLE_TOP_PADDING;
+        let title_width = renderer.font.measure_text_width(title, TITLE_FONT_SIZE) + 6;
+        let title_height = renderer.font.line_height(TITLE_FONT_SIZE) + 4;
 
-        let (row, col) = glyph
-            .into_iter()
-            .enumerate()
-            .find_map(|(row, bits)| {
-                (0..8u32).find_map(|col| {
-                    let is_set = (bits >> col) & 1 == 1;
-                    let mirrored_set = (bits >> (7 - col)) & 1 == 1;
-                    if is_set && !mirrored_set {
-                        Some((row as u32, col))
-                    } else {
-                        None
-                    }
-                })
-            })
-            .expect("test glyph should contain at least one asymmetric lit pixel");
+        assert!(
+            count_region_differences(
+                &rendered,
+                &panel_only,
+                title_x,
+                title_y,
+                title_width,
+                title_height
+            ) > 40
+        );
+    }
 
-        assert_eq!(image.get_pixel(1 + col, 1 + row).0, [255, 255, 255, 255]);
-        assert_eq!(image.get_pixel(1 + (7 - col), 1 + row).0, [0, 0, 0, 255]);
+    #[test]
+    fn prepared_jpeg_keeps_title_region_visible() {
+        let background =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(320, 320, Rgba([20, 30, 40, 255])));
+        let renderer = DashboardRenderer::new(sample_dashboard_config()).unwrap();
+        let rendered = renderer.render(&background, Some(sample_metrics()));
+        let panel_only =
+            render_panels_only_image(&background, sample_dashboard_config().slots.len());
+
+        let prepared =
+            prepare_dynamic_image(PathBuf::from("dashboard-debug.jpg"), rendered).unwrap();
+        let prepared_panel = prepare_dynamic_image(
+            PathBuf::from("dashboard-panel-only.jpg"),
+            DynamicImage::ImageRgba8(panel_only),
+        )
+        .unwrap();
+        let text_jpeg = image::load_from_memory(prepared.jpeg_bytes())
+            .unwrap()
+            .to_rgba8();
+        let panel_jpeg = image::load_from_memory(prepared_panel.jpeg_bytes())
+            .unwrap()
+            .to_rgba8();
+
+        let title = &sample_dashboard_config().slots[0].title;
+        let title_x = PANEL_MARGIN + PANEL_PADDING_X;
+        let title_y = PANEL_MARGIN + TITLE_TOP_PADDING;
+        let title_width = renderer.font.measure_text_width(title, TITLE_FONT_SIZE) + 8;
+        let title_height = renderer.font.line_height(TITLE_FONT_SIZE) + 6;
+
+        assert!(
+            count_region_differences(
+                &text_jpeg,
+                &panel_jpeg,
+                title_x,
+                title_y,
+                title_width,
+                title_height
+            ) > 25
+        );
+    }
+
+    #[test]
+    fn image_source_writes_debug_output_when_configured() {
+        let temp = std::env::temp_dir().join(format!(
+            "lcdd-dashboard-test-{}-{}",
+            std::process::id(),
+            "debug-output"
+        ));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).unwrap();
+
+        let image_path = temp.join("image.jpg");
+        let debug_path = temp.join("rendered.png");
+        std::fs::write(&image_path, include_bytes!("../assets/test.jpg")).unwrap();
+
+        let mut dashboard = sample_dashboard_config();
+        dashboard.debug_output_path = Some(debug_path.clone());
+
+        let _source = ImageSource::new(
+            image_path,
+            Duration::from_secs(60),
+            Duration::ZERO,
+            PrepareOptions::default(),
+            dashboard,
+        )
+        .unwrap();
+
+        assert!(debug_path.exists());
+        assert!(image::open(&debug_path).is_ok());
+
+        let _ = std::fs::remove_dir_all(&temp);
     }
 
     #[test]
@@ -614,6 +665,9 @@ mod tests {
             render_interval_ms: 1000,
             time_format: TimeFormat::TwentyFourHour,
             temperature_unit: TemperatureUnit::Celsius,
+            font_path: None,
+            font_family: None,
+            debug_output_path: None,
             slots: vec![
                 slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
                 slot("CPU", "temp", DashboardMetric::CpuTemperature),
@@ -645,5 +699,57 @@ mod tests {
             subtitle: subtitle.to_string(),
             metric,
         }
+    }
+
+    fn render_panels_only_image(background: &DynamicImage, slot_count: usize) -> RgbaImage {
+        let mut canvas = background.to_rgba8();
+        let width = canvas.width();
+        let height = canvas.height();
+        let available_height = height
+            .saturating_sub(PANEL_MARGIN * 2)
+            .saturating_sub(PANEL_GAP * 3);
+        let row_height = available_height / 4;
+
+        for index in 0..slot_count {
+            let top = PANEL_MARGIN + index as u32 * (row_height + PANEL_GAP);
+            fill_rect_alpha(
+                &mut canvas,
+                PANEL_MARGIN,
+                top,
+                width.saturating_sub(PANEL_MARGIN * 2),
+                row_height,
+                PANEL_COLOR,
+            );
+        }
+
+        canvas
+    }
+
+    fn count_region_differences(
+        lhs: &RgbaImage,
+        rhs: &RgbaImage,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    ) -> usize {
+        let max_x = (x + width).min(lhs.width()).min(rhs.width());
+        let max_y = (y + height).min(lhs.height()).min(rhs.height());
+        let mut count = 0;
+
+        for yy in y..max_y {
+            for xx in x..max_x {
+                let left = lhs.get_pixel(xx, yy).0;
+                let right = rhs.get_pixel(xx, yy).0;
+                let delta = left[0].abs_diff(right[0]) as u16
+                    + left[1].abs_diff(right[1]) as u16
+                    + left[2].abs_diff(right[2]) as u16;
+                if delta > 30 {
+                    count += 1;
+                }
+            }
+        }
+
+        count
     }
 }

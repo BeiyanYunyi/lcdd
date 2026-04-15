@@ -34,8 +34,11 @@
           devShells.default = pkgs.mkShell {
             name = "lcdd-dev-shell";
             buildInputs = with pkgs; [
+              dejavu_fonts
               gcc
               pkg-config
+              fontconfig
+              freetype
               systemdLibs # udev is alias of systemdLibs in nixpkgs
               hidapi
             ];
@@ -55,8 +58,11 @@
               # Add extra inputs here or any other derivation settings
               # doCheck = true;
               buildInputs = [
+                dejavu_fonts
                 gcc
                 pkg-config
+                fontconfig
+                freetype
                 systemdLibs # udev is alias of systemdLibs in nixpkgs
                 hidapi
               ];

@@ -131,6 +131,9 @@ rotate_degrees = 0
 render_interval_ms = 1000
 time_format = "24h"
 temperature_unit = "celsius"
+# font_family = "Noto Sans"
+# font_path = "/path/to/NotoSansCJK-Regular.ttc"
+# debug_output_path = "./out/dashboard-debug.png"
 
 [[dashboard.slots]]
 title = "CPU"
@@ -155,12 +158,22 @@ Inside the dev shell:
 cargo run -- --config ./config.toml
 ```
 
+Dashboard font resolution order:
+
+- use `dashboard.font_path` when set
+- otherwise resolve `dashboard.font_family` from system fonts when set
+- otherwise try a best-effort sans-serif fallback list from system fonts
+
+The dashboard renderer supports UTF-8 labels for Latin and common CJK text. It does not perform complex-script shaping.
+If `dashboard.debug_output_path` is set, the service also writes the final composited frame to disk before JPEG upload so you can inspect what the LCD is actually being sent.
+
 Behavior summary:
 
 - sends the captured init packet on connect
 - packetizes the JPEG natively into `1024`-byte HID reports
 - decodes common image formats, optionally rotates them, and re-encodes to an internal JPEG
 - can render a live dashboard overlay with up to 4 fixed, top-aligned slots over a background image
+- renders dashboard text through `font-kit`, with UTF-8 support for Latin and common CJK labels
 - collects built-in metrics for aggregate CPU usage, CPU temperature, memory usage, and local time
 - verifies the device ack after each upload
 - keeps re-uploading the image so the LCD does not clear itself
@@ -209,6 +222,7 @@ uv run tools/lcdd_hid.py list-devices
 
 - The project is currently Linux-oriented.
 - The Rust service supports a background image with a simple built-in dashboard overlay, not arbitrary animation generation yet.
+- Dashboard text rendering depends on a usable system font unless `dashboard.font_path` points to a specific font file.
 - Images must already be preprocessed to `320x320` JPEG.
 - Some protocol semantics are still inferred from capture data rather than fully proven.
 - Device behavior on shutdown, disconnect, or idle periods may still depend on hardware quirks.

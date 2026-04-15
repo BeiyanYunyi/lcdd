@@ -122,7 +122,8 @@ mod tests {
             64,
             image::Rgb([0, 255, 0]),
         ));
-        next.write_to(&mut next_png, image::ImageFormat::Png).unwrap();
+        next.write_to(&mut next_png, image::ImageFormat::Png)
+            .unwrap();
         std::fs::write(&path, next_png.into_inner()).unwrap();
 
         match source.refresh_if_changed().unwrap() {
@@ -170,6 +171,9 @@ mod tests {
             render_interval_ms: 1000,
             time_format: TimeFormat::TwentyFourHour,
             temperature_unit: TemperatureUnit::Celsius,
+            font_path: None,
+            font_family: None,
+            debug_output_path: None,
             slots: vec![slot("CPU", "usage", DashboardMetric::CpuUsagePercent)],
         }
     }

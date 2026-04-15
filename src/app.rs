@@ -106,11 +106,11 @@ fn run_connected_loop(
             let RefreshOutcome::SourceReloaded(image) = refresh_outcome else {
                 unreachable!("refresh logging only applies to source reloads");
             };
-                info!(
-                    "using refreshed image {} ({} packets)",
-                    image.source_path().display(),
-                    image.packets().len()
-                );
+            info!(
+                "using refreshed image {} ({} packets)",
+                image.source_path().display(),
+                image.packets().len()
+            );
         }
 
         let image = state.source().current();
