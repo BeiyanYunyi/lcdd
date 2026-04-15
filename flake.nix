@@ -25,6 +25,17 @@
           craneLib = (crane.mkLib pkgs).overrideToolchain (
             p: p.rust-bin.selectLatestNightlyWith (toolchain: toolchain.minimal)
           );
+          buildInputs = with pkgs; [
+            gcc
+            pkg-config
+            systemdLibs # udev is alias of systemdLibs in nixpkgs
+            hidapi
+            libxkbcommon
+            libxcb
+            wayland
+            libGL
+            vulkan-loader
+          ];
         in
         {
           _module.args.pkgs = import inputs.nixpkgs {
@@ -33,12 +44,8 @@
           };
           devShells.default = pkgs.mkShell {
             name = "lcdd-dev-shell";
-            buildInputs = with pkgs; [
-              gcc
-              pkg-config
-              systemdLibs # udev is alias of systemdLibs in nixpkgs
-              hidapi
-            ];
+            LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath buildInputs}";
+            inherit buildInputs;
           };
           packages.default =
             with pkgs;
@@ -54,12 +61,7 @@
               };
               # Add extra inputs here or any other derivation settings
               # doCheck = true;
-              buildInputs = [
-                gcc
-                pkg-config
-                systemdLibs # udev is alias of systemdLibs in nixpkgs
-                hidapi
-              ];
+              inherit buildInputs;
               CI = "true";
               meta.mainProgram = "lcdd";
             };

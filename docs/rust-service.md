@@ -2,6 +2,8 @@
 
 This document is the implementation contract for the Rust service that keeps a background image on the ASUS liquid-cooler LCD, with an optional generated dashboard overlay.
 
+The repository also contains an experimental GPUI preview binary for future editor and preview work, but that binary is not part of the production LCD upload path described here.
+
 ## Goal
 
 Build a long-running Rust service that:
@@ -275,6 +277,29 @@ Planned dependencies:
 - `jpeg-decoder` for JPEG validation
 - `log` and `fern` for runtime logging
 - `ctrlc` for shutdown handling
+
+## Experimental Preview
+
+The repository may also ship an experimental `gpui`-based preview binary outside the production service loop.
+
+That experiment is allowed to:
+
+- load the current config
+- display the background image and configured slots in a desktop window
+- render a snapshot of the same built-in metrics
+
+The repository may also ship an experimental `gpui` headless export proof binary. Its current result on Linux is positive, but only through a local `vendor/gpui` fork: the headless backend can open an offscreen window, render a GPUI scene into a blade-backed offscreen target, and read it back to an RGBA image for PNG export.
+
+That experiment should not be treated as proof that the daemon should render through `gpui`. It is a feasibility track for future editor/preview work, and headless export plus HID integration remain separate follow-up decisions.
+
+The repository may also ship an experimental EGL-based preview/export path outside the production service loop. That path is intended to validate Linux rendering targets, not to replace the service renderer.
+
+Current EGL experiment expectations:
+
+- it reuses the existing CPU-composited frame as the source image for preview/export validation
+- the export binary attempts surfaceless EGL first and falls back to a pbuffer surface
+- the desktop preview binary exists for on-screen inspection, but currently only supports X11/XCB window handles
+- this experiment is separate from the production HID upload path and separate from the GPUI spike
 
 ## Acceptance Criteria
 

@@ -75,6 +75,7 @@ impl PrepareOptions {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn prepare_image_bytes(
     path: &Path,
     bytes: &[u8],
@@ -84,6 +85,7 @@ pub(crate) fn prepare_image_bytes(
     prepare_dynamic_image(path.to_path_buf(), normalized)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn load_normalized_image(
     path: &Path,
     bytes: &[u8],

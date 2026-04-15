@@ -3,6 +3,16 @@ name = "lcdd"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+egl-experiment = [
+    "dep:glow",
+    "dep:khronos-egl",
+    "dep:raw-window-handle",
+    "dep:winit",
+]
+gpui-experiment = ["dep:gpui"]
+
 [dependencies]
 anyhow = "1.0"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
@@ -10,9 +20,34 @@ config = { version = "0.15", default-features = false, features = ["toml", "ron"
 ctrlc = "3.4"
 fern = { version = "0.7.1", features=["colored"] }
 font8x8 = "0.3"
+glow = { version = "0.16.0", optional = true }
+gpui = { path = "vendor/gpui", optional = true }
 hidapi = { version = "2.6", default-features = false, features = ["linux-shared-hidraw"] }
 humantime = "2.3.0"
 image = { version = "0.25", default-features = false, features = ["bmp", "ico", "jpeg", "png", "webp"] }
+khronos-egl = { version = "6.0.0", features = ["static"], optional = true }
 log = "0.4"
+raw-window-handle = { version = "0.6.2", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 sysinfo = { version = "0.37", default-features = false, features = ["component", "system"] }
+winit = { version = "0.30.12", default-features = false, features = ["rwh_06", "wayland", "x11"], optional = true }
+
+[[bin]]
+name = "lcdd-gpui-preview"
+path = "src/bin/lcdd_gpui_preview.rs"
+required-features = ["gpui-experiment"]
+
+[[bin]]
+name = "lcdd-gpui-export"
+path = "src/bin/lcdd_gpui_export.rs"
+required-features = ["gpui-experiment"]
+
+[[bin]]
+name = "lcdd-egl-preview"
+path = "src/bin/lcdd_egl_preview.rs"
+required-features = ["egl-experiment"]
+
+[[bin]]
+name = "lcdd-egl-export"
+path = "src/bin/lcdd_egl_export.rs"
+required-features = ["egl-experiment"]

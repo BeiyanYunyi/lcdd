@@ -7,7 +7,7 @@ mod source;
 use std::path::{Path, PathBuf};
 
 pub use prepare::{PrepareOptions, Rotation};
-pub use dashboard::ImageSource;
+pub use dashboard::{ImageSource, render_dashboard_rgba};
 pub use source::{FrameSource, RefreshOutcome};
 
 #[derive(Debug, Clone)]

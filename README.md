@@ -10,6 +10,7 @@ At this point the repo can:
 - reconstruct JPEG payloads from the capture
 - replay captured sessions back to the cooler for validation
 - run a native Rust service that keeps a `320x320` image on the LCD with an optional live dashboard overlay
+- run an experimental GPUI desktop preview for the same dashboard layout
 
 If you want protocol details, read [docs/protocol.md](docs/protocol.md). If you want the Rust service design notes, read [docs/rust-service.md](docs/rust-service.md).
 
@@ -49,6 +50,10 @@ Useful checks:
 
 ```bash
 cargo test
+cargo check --features egl-experiment --bin lcdd-egl-preview
+cargo check --features egl-experiment --bin lcdd-egl-export
+cargo check --features gpui-experiment --bin lcdd-gpui-preview
+cargo check --features gpui-experiment --bin lcdd-gpui-export
 uv run tools/lcdd_hid.py list-devices
 ```
 
@@ -169,6 +174,63 @@ Behavior summary:
 - live-applies logging level and color changes from config reloads
 - retries automatically if the cooler disconnects or re-enumerates
 
+### GPUI Preview Spike
+
+There is also an experimental desktop-only GPUI preview binary:
+
+```bash
+nix develop -c cargo run --features gpui-experiment --bin lcdd-gpui-preview -- --config ./config.toml
+```
+
+This spike is intentionally separate from the production LCD upload path.
+
+- it opens a `320x320` desktop window using `gpui`
+- it loads the configured background image from `source.path`
+- it renders the configured dashboard slots with one snapshot of current local metrics
+- it is meant to test whether `gpui` is a viable future UI framework for editor/preview work
+
+Current limitations of the spike:
+
+- it is not wired into `ImageSource` or HID upload
+- it assumes a normal desktop Linux session rather than a headless daemon environment
+
+There is also an experimental headless export proof binary:
+
+```bash
+nix develop -c cargo run --features gpui-experiment --bin lcdd-gpui-export -- --config ./config.toml --output /tmp/lcdd-gpui-proof.png
+```
+
+This proof now uses a local `gpui` fork in `vendor/gpui` and establishes a positive experimental result on Linux:
+
+- the Linux headless backend can open an offscreen window without `DISPLAY` or `WAYLAND_DISPLAY`
+- the fork renders the GPUI scene into a blade-backed offscreen target and reads it back to RGBA
+- the command writes a PNG artifact and exits synchronously
+- this is still an experiment for preview/export work, not a replacement for the production renderer
+
+### EGL Preview And Export Experiment
+
+There is also an experimental EGL path that reuses the current CPU-composited LCD frame and validates Linux rendering targets separately from GPUI:
+
+```bash
+nix develop -c cargo run --features egl-experiment --bin lcdd-egl-export -- --config ./config.toml --output /tmp/lcdd-egl-proof.png
+```
+
+That export proof currently succeeds on this machine:
+
+- it renders the same background image plus dashboard overlay layout used by the service
+- it attempts surfaceless EGL first and falls back to a pbuffer surface if needed
+- the current machine succeeds through the surfaceless path and writes the requested PNG
+
+There is also an experimental desktop preview binary:
+
+```bash
+nix develop -c cargo run --features egl-experiment --bin lcdd-egl-preview -- --config ./config.toml
+```
+
+Current preview limitation:
+
+- the EGL preview implementation currently supports X11/XCB window handles, not native Wayland preview surfaces
+
 ## Python Prototype Tools
 
 The Python scripts are still useful for reverse-engineering and validation, but they are no longer the main runtime path.
@@ -209,6 +271,9 @@ uv run tools/lcdd_hid.py list-devices
 
 - The project is currently Linux-oriented.
 - The Rust service supports a background image with a simple built-in dashboard overlay, not arbitrary animation generation yet.
+- The EGL export experiment is a feasibility track for Linux preview/export targets, not the production LCD renderer.
+- The GPUI preview is only a desktop feasibility experiment, not proof that GPUI can replace the headless renderer.
+- The GPUI export proof currently shows that headless or offscreen export is not available through the public GPUI path used here on Linux, including the `gpui::canvas` path.
 - Images must already be preprocessed to `320x320` JPEG.
 - Some protocol semantics are still inferred from capture data rather than fully proven.
 - Device behavior on shutdown, disconnect, or idle periods may still depend on hardware quirks.

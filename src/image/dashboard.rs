@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -41,6 +41,22 @@ pub struct ImageSource {
     renderer: DashboardRenderer,
     collector: Option<MetricCollector>,
     current: PreparedImage,
+}
+
+pub fn render_dashboard_rgba(
+    path: &Path,
+    rotation: crate::image::Rotation,
+    dashboard: DashboardConfig,
+) -> Result<RgbaImage> {
+    let source_bytes = fs::read(path)
+        .with_context(|| format!("failed to read image file {}", path.display()))?;
+    let background = load_normalized_image_without_rotation(path, &source_bytes)?;
+    let renderer = DashboardRenderer::new(dashboard);
+    let mut collector = renderer.has_overlay().then(MetricCollector::new);
+    let rendered = rotation.apply(
+        renderer.render(&background, collector.as_mut().map(MetricCollector::collect)),
+    );
+    Ok(rendered.to_rgba8())
 }
 
 impl ImageSource {
