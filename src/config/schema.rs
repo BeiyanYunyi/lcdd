@@ -23,6 +23,8 @@ pub struct AppConfig {
     pub device: DeviceConfig,
     #[serde(default)]
     pub logging: LoggingConfig,
+    #[serde(default)]
+    pub basedir: Option<String>,
     pub source: SourceConfig,
     #[serde(default)]
     pub dashboard: DashboardConfig,
@@ -36,6 +38,22 @@ impl AppConfig {
     fn validate(&self) -> Result<()> {
         self.source.validate()?;
         self.dashboard.validate()?;
+        Ok(())
+    }
+
+    fn resolve_relative_paths(&mut self, config_path: &Path) -> Result<()> {
+        let base_dir = resolve_base_dir(self.basedir.as_deref(), config_path)?;
+        self.source.path = resolve_path_from_base(&base_dir, &self.source.path);
+        self.dashboard.font_path = self
+            .dashboard
+            .font_path
+            .take()
+            .map(|path| resolve_path_from_base(&base_dir, &path));
+        self.dashboard.debug_output_path = self
+            .dashboard
+            .debug_output_path
+            .take()
+            .map(|path| resolve_path_from_base(&base_dir, &path));
         Ok(())
     }
 }
@@ -342,10 +360,42 @@ pub fn load_config(path: &Path) -> Result<AppConfig> {
     let parsed: AppConfig = config
         .try_deserialize()
         .with_context(|| format!("failed to deserialize config {}", path.display()))?;
+    let mut parsed = parsed;
+    parsed
+        .resolve_relative_paths(path)
+        .with_context(|| format!("invalid config in {}", path.display()))?;
     parsed
         .validate()
         .with_context(|| format!("invalid config in {}", path.display()))?;
     Ok(parsed)
+}
+
+fn resolve_base_dir(basedir: Option<&str>, config_path: &Path) -> Result<PathBuf> {
+    match basedir {
+        None | Some("cwd") => {
+            env::current_dir().context("failed to determine current directory for basedir")
+        }
+        Some("config_dir") => Ok(config_path
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf)),
+        Some(path) => {
+            let path = PathBuf::from(path);
+            ensure!(
+                path.is_absolute(),
+                "basedir must be \"cwd\", \"config_dir\", or an absolute path; got {:?}",
+                path
+            );
+            Ok(path)
+        }
+    }
+}
+
+fn resolve_path_from_base(base_dir: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base_dir.join(path)
+    }
 }
 
 fn default_vendor_id() -> u16 {
@@ -390,14 +440,16 @@ fn default_dashboard_render_interval_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::PathBuf;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
 
     use config::{Config, File, FileFormat};
     use log::LevelFilter;
 
     use super::{
         DashboardConfig, DashboardMetric, DashboardSlot, LoggingConfig, SourceConfig,
-        TemperatureUnit, TimeFormat, default_config_path,
+        TemperatureUnit, TimeFormat, default_config_path, load_config, resolve_base_dir,
     };
 
     #[test]
@@ -515,6 +567,212 @@ mod tests {
     }
 
     #[test]
+    fn load_config_defaults_basedir_to_process_cwd() {
+        let _cwd_guard = cwd_test_guard();
+        let temp = test_dir("load-config-default-basedir");
+        let cwd = temp.join("cwd");
+        let config_dir = temp.join("config");
+        fs::create_dir_all(&cwd).unwrap();
+        fs::create_dir_all(&config_dir).unwrap();
+
+        let previous_cwd = std::env::current_dir().unwrap();
+        let config_path = config_dir.join("config.toml");
+        write_config_file(
+            &config_path,
+            r#"
+[source]
+path = "./image.jpg"
+
+[dashboard]
+font_path = "./font.ttf"
+debug_output_path = "./out/dashboard-debug.png"
+"#,
+        );
+
+        std::env::set_current_dir(&cwd).unwrap();
+        let config = load_config(&config_path).unwrap();
+        std::env::set_current_dir(previous_cwd).unwrap();
+
+        assert_eq!(config.basedir, None);
+        assert_eq!(config.source.path, cwd.join("./image.jpg"));
+        assert_eq!(config.dashboard.font_path, Some(cwd.join("./font.ttf")));
+        assert_eq!(
+            config.dashboard.debug_output_path,
+            Some(cwd.join("./out/dashboard-debug.png"))
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn load_config_resolves_relative_paths_from_config_dir() {
+        let _cwd_guard = cwd_test_guard();
+        let temp = test_dir("load-config-config-dir-basedir");
+        let cwd = temp.join("cwd");
+        let config_dir = temp.join("config");
+        fs::create_dir_all(&cwd).unwrap();
+        fs::create_dir_all(&config_dir).unwrap();
+
+        let previous_cwd = std::env::current_dir().unwrap();
+        let config_path = config_dir.join("config.toml");
+        write_config_file(
+            &config_path,
+            r#"
+basedir = "config_dir"
+
+[source]
+path = "./image.jpg"
+
+[dashboard]
+font_path = "./font.ttf"
+debug_output_path = "./out/dashboard-debug.png"
+"#,
+        );
+
+        std::env::set_current_dir(&cwd).unwrap();
+        let config = load_config(&config_path).unwrap();
+        std::env::set_current_dir(previous_cwd).unwrap();
+
+        assert_eq!(config.source.path, config_dir.join("./image.jpg"));
+        assert_eq!(
+            config.dashboard.font_path,
+            Some(config_dir.join("./font.ttf"))
+        );
+        assert_eq!(
+            config.dashboard.debug_output_path,
+            Some(config_dir.join("./out/dashboard-debug.png"))
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn load_config_resolves_relative_paths_from_absolute_basedir() {
+        let _cwd_guard = cwd_test_guard();
+        let temp = test_dir("load-config-absolute-basedir");
+        let cwd = temp.join("cwd");
+        let config_dir = temp.join("config");
+        let absolute_base = temp.join("assets");
+        fs::create_dir_all(&cwd).unwrap();
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::create_dir_all(&absolute_base).unwrap();
+
+        let previous_cwd = std::env::current_dir().unwrap();
+        let config_path = config_dir.join("config.toml");
+        write_config_file(
+            &config_path,
+            &format!(
+                r#"
+basedir = "{}"
+
+[source]
+path = "./image.jpg"
+
+[dashboard]
+font_path = "./font.ttf"
+debug_output_path = "./out/dashboard-debug.png"
+"#,
+                absolute_base.display()
+            ),
+        );
+
+        std::env::set_current_dir(&cwd).unwrap();
+        let config = load_config(&config_path).unwrap();
+        std::env::set_current_dir(previous_cwd).unwrap();
+
+        assert_eq!(config.source.path, absolute_base.join("image.jpg"));
+        assert_eq!(
+            config.dashboard.font_path,
+            Some(absolute_base.join("font.ttf"))
+        );
+        assert_eq!(
+            config.dashboard.debug_output_path,
+            Some(absolute_base.join("out/dashboard-debug.png"))
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn load_config_preserves_absolute_paths_in_any_mode() {
+        let _cwd_guard = cwd_test_guard();
+        let temp = test_dir("load-config-preserve-absolute-paths");
+        let cwd = temp.join("cwd");
+        let config_dir = temp.join("config");
+        let source_path = temp.join("absolute-image.jpg");
+        let font_path = temp.join("absolute-font.ttf");
+        let debug_output_path = temp.join("absolute-dashboard.png");
+        fs::create_dir_all(&cwd).unwrap();
+        fs::create_dir_all(&config_dir).unwrap();
+
+        let previous_cwd = std::env::current_dir().unwrap();
+        let config_path = config_dir.join("config.toml");
+        write_config_file(
+            &config_path,
+            &format!(
+                r#"
+basedir = "config_dir"
+
+[source]
+path = "{}"
+
+[dashboard]
+font_path = "{}"
+debug_output_path = "{}"
+"#,
+                source_path.display(),
+                font_path.display(),
+                debug_output_path.display()
+            ),
+        );
+
+        std::env::set_current_dir(&cwd).unwrap();
+        let config = load_config(&config_path).unwrap();
+        std::env::set_current_dir(previous_cwd).unwrap();
+
+        assert_eq!(config.source.path, source_path);
+        assert_eq!(config.dashboard.font_path, Some(font_path));
+        assert_eq!(config.dashboard.debug_output_path, Some(debug_output_path));
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn load_config_rejects_relative_custom_basedir() {
+        let temp = test_dir("load-config-invalid-basedir");
+        let config_dir = temp.join("config");
+        fs::create_dir_all(&config_dir).unwrap();
+
+        let config_path = config_dir.join("config.toml");
+        write_config_file(
+            &config_path,
+            r#"
+basedir = "assets"
+
+[source]
+path = "./image.jpg"
+"#,
+        );
+
+        let error = load_config(&config_path).unwrap_err();
+        let error_text = format!("{error:#}");
+
+        assert!(
+            error_text.contains("basedir must be \"cwd\", \"config_dir\", or an absolute path")
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn resolve_base_dir_uses_dot_when_config_has_no_parent() {
+        assert_eq!(
+            resolve_base_dir(Some("config_dir"), PathBuf::from("config.toml").as_path()).unwrap(),
+            PathBuf::new()
+        );
+    }
+
+    #[test]
     fn dashboard_accepts_partial_slot_list() {
         let dashboard = DashboardConfig {
             render_interval_ms: 1000,
@@ -531,6 +789,23 @@ mod tests {
         };
 
         assert!(dashboard.validate().is_ok());
+    }
+
+    fn write_config_file(path: &std::path::Path, contents: &str) {
+        fs::write(path, contents.trim_start()).unwrap();
+    }
+
+    fn test_dir(name: &str) -> PathBuf {
+        let temp =
+            std::env::temp_dir().join(format!("lcdd-schema-test-{}-{}", std::process::id(), name));
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(&temp).unwrap();
+        temp
+    }
+
+    fn cwd_test_guard() -> MutexGuard<'static, ()> {
+        static GUARD: OnceLock<Mutex<()>> = OnceLock::new();
+        GUARD.get_or_init(|| Mutex::new(())).lock().unwrap()
     }
 
     #[test]

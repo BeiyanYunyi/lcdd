@@ -13,12 +13,20 @@
 
   outputs =
     {
+      self,
       flake-parts,
       rust-overlay,
       crane,
       ...
     }@inputs:
     flake-parts.lib.mkFlake { inherit inputs; } {
+      flake = {
+        homeManagerModules = {
+          default = import ./nix/module.nix { inherit self; };
+          lcdd = import ./nix/module.nix { inherit self; };
+        };
+      };
+
       perSystem =
         { system, pkgs, ... }:
         let

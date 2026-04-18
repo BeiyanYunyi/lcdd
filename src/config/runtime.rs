@@ -387,6 +387,7 @@ mod tests {
         AppConfig {
             device: DeviceConfig::default(),
             logging: LoggingConfig::default(),
+            basedir: None,
             source: SourceConfig {
                 path: image_path.to_path_buf(),
                 rotate_degrees: 0,

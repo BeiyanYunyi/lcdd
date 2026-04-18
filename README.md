@@ -58,6 +58,74 @@ If you do not want an interactive shell, this also works:
 nix develop -c cargo test
 ```
 
+## Home Manager Module
+
+This flake exports a Home Manager module at `homeManagerModules.default` and `homeManagerModules.lcdd`.
+
+Import it from your Home Manager setup:
+
+```nix
+{
+  inputs.lcdd.url = "github:beiyanyunyi/lcdd";
+
+  outputs = { home-manager, lcdd, ... }: {
+    homeConfigurations.me = home-manager.lib.homeManagerConfiguration {
+      pkgs = import home-manager.inputs.nixpkgs {
+        system = "x86_64-linux";
+      };
+      modules = [
+        lcdd.homeManagerModules.default
+        {
+          programs.lcdd = {
+            enable = true;
+            config = {
+              source.path = "/home/me/Pictures/lcd-background.png";
+
+              dashboard.slots = [
+                {
+                  title = "CPU";
+                  subtitle = "usage";
+                  metric = "cpu_usage_percent";
+                }
+              ];
+            };
+          };
+        }
+      ];
+    };
+  };
+}
+```
+
+If you already manage the runtime config file yourself, point the module at that file instead:
+
+```nix
+{
+  programs.lcdd = {
+    enable = true;
+    configFile = "/home/me/.config/lcdd/config.toml";
+  };
+}
+```
+
+`programs.lcdd.config` and `programs.lcdd.configFile` are mutually exclusive. The module runs `lcdd` as a user service via `systemd --user`.
+
+### Device Permissions
+
+Home Manager cannot grant access to the cooler device on its own. You still need a system-level udev rule or equivalent permission setup for the known ASUS cooler `VID:PID = 0x0b05:0x1ca9`.
+
+On NixOS, one way to do that is:
+
+```nix
+{
+  services.udev.extraRules = ''
+    SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="1ca9", TAG+="uaccess"
+  '';
+}
+```
+
+Without that step, the Home Manager user service may start but fail to open the HID device.
+
 ## Rust LCD Service
 
 The Rust program is the intended runtime path for LCD output.
@@ -123,6 +191,8 @@ interface_bulk = 1
 level = "info"
 color = true
 
+basedir = "cwd" # "cwd", "config_dir", or an absolute directory like "/srv/lcdd"
+
 [source]
 path = "./image.jpg"
 rotate_degrees = 0
@@ -163,6 +233,14 @@ Dashboard font resolution order:
 - use `dashboard.font_path` when set
 - otherwise resolve `dashboard.font_family` from system fonts when set
 - otherwise try a best-effort sans-serif fallback list from system fonts
+
+Relative path resolution:
+
+- if `basedir` is omitted, relative paths are resolved from the `lcdd` process working directory
+- `basedir = "cwd"` keeps that process-working-directory behavior explicitly
+- `basedir = "config_dir"` resolves relative paths from the directory containing the loaded config file
+- any other `basedir` value must be an absolute directory path and becomes the base for relative paths
+- this applies to `source.path`, `dashboard.font_path`, and `dashboard.debug_output_path`
 
 The dashboard renderer supports UTF-8 labels for Latin and common CJK text. It does not perform complex-script shaping.
 If `dashboard.debug_output_path` is set, the service also writes the final composited frame to disk before JPEG upload so you can inspect what the LCD is actually being sent.

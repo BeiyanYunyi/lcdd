@@ -178,6 +178,8 @@ interface_bulk = 1
 level = "info"
 color = true
 
+basedir = "cwd" # "cwd", "config_dir", or an absolute base directory
+
 [source]
 path = "./image.jpg"
 rotate_degrees = 0
@@ -209,6 +211,10 @@ init_on_connect = false
 
 - `device.serial` is optional and is used to disambiguate multiple matching coolers
 - `source.path` is always the background image path
+- relative config paths resolve from the process current working directory when `basedir` is omitted or set to `cwd`
+- `basedir = "config_dir"` resolves relative config paths from the config file directory
+- any other `basedir` value must be an absolute directory and becomes the base for relative config paths
+- this applies to `source.path`, `dashboard.font_path`, and `dashboard.debug_output_path`
 - the runtime normalizes the source image to `320x320` before upload
 - `refresh.interval_ms = 0` means continuous looping
 - `protocol.init_on_connect = false` is fine for my current cooler
