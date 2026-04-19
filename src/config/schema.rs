@@ -378,11 +378,22 @@ fn resolve_base_dir(basedir: Option<&str>, config_path: &Path) -> Result<PathBuf
         Some("config_dir") => Ok(config_path
             .parent()
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf)),
+        Some("config_dir_real") => {
+            let real_config_path = config_path.canonicalize().with_context(|| {
+                format!(
+                    "failed to resolve real config path for basedir from {}",
+                    config_path.display()
+                )
+            })?;
+            Ok(real_config_path
+                .parent()
+                .map_or_else(PathBuf::new, Path::to_path_buf))
+        }
         Some(path) => {
             let path = PathBuf::from(path);
             ensure!(
                 path.is_absolute(),
-                "basedir must be \"cwd\", \"config_dir\", or an absolute path; got {:?}",
+                "basedir must be \"cwd\", \"config_dir\", \"config_dir_real\", or an absolute path; got {:?}",
                 path
             );
             Ok(path)
@@ -451,6 +462,9 @@ mod tests {
         DashboardConfig, DashboardMetric, DashboardSlot, LoggingConfig, SourceConfig,
         TemperatureUnit, TimeFormat, default_config_path, load_config, resolve_base_dir,
     };
+
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
 
     #[test]
     fn default_config_search_order_prefers_toml_then_ron_then_corn() {
@@ -646,6 +660,104 @@ debug_output_path = "./out/dashboard-debug.png"
         let _ = fs::remove_dir_all(temp);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn load_config_resolves_relative_paths_from_real_config_dir_symlink_chain() {
+        let _cwd_guard = cwd_test_guard();
+        let temp = test_dir("load-config-config-dir-real-basedir");
+        let cwd = temp.join("cwd");
+        let link_dir = temp.join("link-config");
+        let real_dir = temp.join("real-config");
+        fs::create_dir_all(&cwd).unwrap();
+        fs::create_dir_all(&link_dir).unwrap();
+        fs::create_dir_all(&real_dir).unwrap();
+
+        let previous_cwd = std::env::current_dir().unwrap();
+        let real_config_path = real_dir.join("config.toml");
+        let link_path = link_dir.join("config-link.toml");
+        let chained_link_path = temp.join("config.toml");
+
+        write_config_file(
+            &real_config_path,
+            r#"
+basedir = "config_dir_real"
+
+[source]
+path = "./image.jpg"
+
+[dashboard]
+font_path = "./font.ttf"
+debug_output_path = "./out/dashboard-debug.png"
+"#,
+        );
+        symlink(&real_config_path, &link_path).unwrap();
+        symlink(&link_path, &chained_link_path).unwrap();
+
+        std::env::set_current_dir(&cwd).unwrap();
+        let config = load_config(&chained_link_path).unwrap();
+        std::env::set_current_dir(previous_cwd).unwrap();
+
+        assert_eq!(config.source.path, real_dir.join("./image.jpg"));
+        assert_eq!(
+            config.dashboard.font_path,
+            Some(real_dir.join("./font.ttf"))
+        );
+        assert_eq!(
+            config.dashboard.debug_output_path,
+            Some(real_dir.join("./out/dashboard-debug.png"))
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_config_keeps_config_dir_for_symlink_path() {
+        let _cwd_guard = cwd_test_guard();
+        let temp = test_dir("load-config-config-dir-symlink");
+        let cwd = temp.join("cwd");
+        let link_dir = temp.join("link-config");
+        let real_dir = temp.join("real-config");
+        fs::create_dir_all(&cwd).unwrap();
+        fs::create_dir_all(&link_dir).unwrap();
+        fs::create_dir_all(&real_dir).unwrap();
+
+        let previous_cwd = std::env::current_dir().unwrap();
+        let real_config_path = real_dir.join("config.toml");
+        let link_path = link_dir.join("config.toml");
+
+        write_config_file(
+            &real_config_path,
+            r#"
+basedir = "config_dir"
+
+[source]
+path = "./image.jpg"
+
+[dashboard]
+font_path = "./font.ttf"
+debug_output_path = "./out/dashboard-debug.png"
+"#,
+        );
+        symlink(&real_config_path, &link_path).unwrap();
+
+        std::env::set_current_dir(&cwd).unwrap();
+        let config = load_config(&link_path).unwrap();
+        std::env::set_current_dir(previous_cwd).unwrap();
+
+        assert_eq!(config.source.path, link_dir.join("./image.jpg"));
+        assert_eq!(
+            config.dashboard.font_path,
+            Some(link_dir.join("./font.ttf"))
+        );
+        assert_eq!(
+            config.dashboard.debug_output_path,
+            Some(link_dir.join("./out/dashboard-debug.png"))
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
     #[test]
     fn load_config_resolves_relative_paths_from_absolute_basedir() {
         let _cwd_guard = cwd_test_guard();
@@ -757,9 +869,9 @@ path = "./image.jpg"
         let error = load_config(&config_path).unwrap_err();
         let error_text = format!("{error:#}");
 
-        assert!(
-            error_text.contains("basedir must be \"cwd\", \"config_dir\", or an absolute path")
-        );
+        assert!(error_text.contains(
+            "basedir must be \"cwd\", \"config_dir\", \"config_dir_real\", or an absolute path"
+        ));
 
         let _ = fs::remove_dir_all(temp);
     }
@@ -770,6 +882,30 @@ path = "./image.jpg"
             resolve_base_dir(Some("config_dir"), PathBuf::from("config.toml").as_path()).unwrap(),
             PathBuf::new()
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_base_dir_uses_real_config_dir_for_symlink_chain() {
+        let temp = test_dir("resolve-base-dir-real");
+        let link_dir = temp.join("link-config");
+        let real_dir = temp.join("real-config");
+        fs::create_dir_all(&link_dir).unwrap();
+        fs::create_dir_all(&real_dir).unwrap();
+
+        let real_config_path = real_dir.join("config.toml");
+        let link_path = link_dir.join("config-link.toml");
+        let chained_link_path = temp.join("config.toml");
+        write_config_file(&real_config_path, "[source]\npath = \"./image.jpg\"\n");
+        symlink(&real_config_path, &link_path).unwrap();
+        symlink(&link_path, &chained_link_path).unwrap();
+
+        assert_eq!(
+            resolve_base_dir(Some("config_dir_real"), &chained_link_path).unwrap(),
+            real_dir
+        );
+
+        let _ = fs::remove_dir_all(temp);
     }
 
     #[test]

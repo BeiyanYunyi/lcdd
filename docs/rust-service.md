@@ -167,6 +167,8 @@ If `--config` is not passed, search the current working directory in this order:
 ### Config schema
 
 ```toml
+basedir = "cwd" # "cwd", "config_dir", "config_dir_real", or an absolute base directory
+
 [device]
 vendor_id = 0x0b05
 product_id = 0x1ca9
@@ -177,8 +179,6 @@ interface_bulk = 1
 [logging]
 level = "info"
 color = true
-
-basedir = "cwd" # "cwd", "config_dir", or an absolute base directory
 
 [source]
 path = "./image.jpg"
@@ -213,6 +213,7 @@ init_on_connect = false
 - `source.path` is always the background image path
 - relative config paths resolve from the process current working directory when `basedir` is omitted or set to `cwd`
 - `basedir = "config_dir"` resolves relative config paths from the config file directory
+- `basedir = "config_dir_real"` resolves relative config paths from the real config file directory after following symlinks
 - any other `basedir` value must be an absolute directory and becomes the base for relative config paths
 - this applies to `source.path`, `dashboard.font_path`, and `dashboard.debug_output_path`
 - the runtime normalizes the source image to `320x320` before upload

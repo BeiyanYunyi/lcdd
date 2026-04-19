@@ -180,6 +180,8 @@ cargo run -- --config ./config.toml
 ### Example Config
 
 ```toml
+basedir = "cwd" # "cwd", "config_dir", "config_dir_real", or an absolute directory like "/srv/lcdd"
+
 [device]
 vendor_id = 0x0b05
 product_id = 0x1ca9
@@ -190,8 +192,6 @@ interface_bulk = 1
 [logging]
 level = "info"
 color = true
-
-basedir = "cwd" # "cwd", "config_dir", or an absolute directory like "/srv/lcdd"
 
 [source]
 path = "./image.jpg"
@@ -239,6 +239,7 @@ Relative path resolution:
 - if `basedir` is omitted, relative paths are resolved from the `lcdd` process working directory
 - `basedir = "cwd"` keeps that process-working-directory behavior explicitly
 - `basedir = "config_dir"` resolves relative paths from the directory containing the loaded config file
+- `basedir = "config_dir_real"` resolves relative paths from the real config file location after following symlinks
 - any other `basedir` value must be an absolute directory path and becomes the base for relative paths
 - this applies to `source.path`, `dashboard.font_path`, and `dashboard.debug_output_path`
 
