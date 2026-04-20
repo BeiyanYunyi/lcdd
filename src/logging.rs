@@ -3,11 +3,12 @@ use std::time::SystemTime;
 
 use anyhow::{Context, Result, anyhow};
 use fern::colors::{Color, ColoredLevelConfig};
-use log::{Log, Metadata, Record};
+use log::{LevelFilter, Log, Metadata, Record};
 
 use crate::config::LoggingConfig;
 
 static LOGGER_STATE: OnceLock<Arc<RwLock<Box<dyn Log>>>> = OnceLock::new();
+const APP_TARGET: &str = "lcdd";
 
 pub fn init(config: &LoggingConfig) -> Result<()> {
     if LOGGER_STATE.get().is_some() {
@@ -72,7 +73,8 @@ impl Log for ReloadableLogger {
 }
 
 fn build_dispatch(config: &LoggingConfig) -> fern::Dispatch {
-    let level = config.level.into_level_filter();
+    let app_level = config.level.into_level_filter();
+    let dependency_level = dependency_level(app_level);
     let color = config.color;
     let level_colors = level_colors();
 
@@ -97,8 +99,19 @@ fn build_dispatch(config: &LoggingConfig) -> fern::Dispatch {
                 ));
             }
         })
-        .level(level)
+        .level(dependency_level)
+        .level_for(APP_TARGET, app_level)
         .chain(std::io::stdout())
+}
+
+fn dependency_level(app_level: LevelFilter) -> LevelFilter {
+    match app_level {
+        LevelFilter::Off => LevelFilter::Off,
+        LevelFilter::Error => LevelFilter::Error,
+        LevelFilter::Warn | LevelFilter::Info | LevelFilter::Debug | LevelFilter::Trace => {
+            LevelFilter::Warn
+        }
+    }
 }
 
 fn level_colors() -> ColoredLevelConfig {
@@ -108,4 +121,25 @@ fn level_colors() -> ColoredLevelConfig {
         .info(Color::Green)
         .debug(Color::White)
         .trace(Color::BrightBlack)
+}
+
+#[cfg(test)]
+mod tests {
+    use log::LevelFilter;
+
+    use super::dependency_level;
+
+    #[test]
+    fn dependency_logs_are_clamped_to_warn_when_app_debugging_is_enabled() {
+        assert_eq!(dependency_level(LevelFilter::Warn), LevelFilter::Warn);
+        assert_eq!(dependency_level(LevelFilter::Info), LevelFilter::Warn);
+        assert_eq!(dependency_level(LevelFilter::Debug), LevelFilter::Warn);
+        assert_eq!(dependency_level(LevelFilter::Trace), LevelFilter::Warn);
+    }
+
+    #[test]
+    fn dependency_logs_preserve_error_and_off_filters() {
+        assert_eq!(dependency_level(LevelFilter::Off), LevelFilter::Off);
+        assert_eq!(dependency_level(LevelFilter::Error), LevelFilter::Error);
+    }
 }

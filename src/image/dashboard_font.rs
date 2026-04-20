@@ -80,11 +80,6 @@ impl DashboardFont {
             .ceil() as u32
     }
 
-    pub(crate) fn line_height(&self, font_size: f32) -> u32 {
-        let metrics = self.scaled_metrics(font_size);
-        (metrics.ascent - metrics.descent).ceil().max(0.0) as u32
-    }
-
     fn load_system_family(font_family: &str) -> Result<Font> {
         let handle = SystemSource::new()
             .select_best_match(
@@ -197,7 +192,6 @@ impl DashboardFont {
         let scale = self.scale(font_size);
         ScaledFontMetrics {
             ascent: metrics.ascent * scale,
-            descent: metrics.descent * scale,
         }
     }
 
@@ -212,7 +206,6 @@ impl DashboardFont {
 
 struct ScaledFontMetrics {
     ascent: f32,
-    descent: f32,
 }
 
 fn blend_pixel(image: &mut RgbaImage, x: u32, y: u32, color: [u8; 4]) {

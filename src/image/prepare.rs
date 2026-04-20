@@ -4,10 +4,10 @@ use std::path::Path;
 use anyhow::{Context, Result, anyhow};
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::{FilterType, overlay};
-use image::{DynamicImage, GenericImageView, ImageFormat, Rgb, RgbImage};
+use image::{DynamicImage, GenericImageView, ImageFormat, Rgb, RgbImage, RgbaImage};
 use log::warn;
 
-use crate::image::{PreparedImage, packetize_jpeg, validate_jpeg_for_lcd};
+use crate::image::{PreparedImage, RenderedFrame, packetize_jpeg, validate_jpeg_for_lcd};
 use crate::protocol::{EXPECTED_JPEG_HEIGHT, EXPECTED_JPEG_WIDTH, MAX_SYNTHETIC_CHUNKS};
 
 const JPEG_QUALITIES: [u8; 16] = [
@@ -92,11 +92,17 @@ pub(crate) fn load_normalized_image(
     load_normalized_image_with_rotation(path, bytes, options.rotation)
 }
 
-pub(crate) fn load_normalized_image_without_rotation(
-    path: &Path,
-    bytes: &[u8],
-) -> Result<DynamicImage> {
-    load_normalized_image_with_rotation(path, bytes, Rotation::Deg0)
+pub(crate) fn validate_source_image(path: &Path, bytes: &[u8]) -> Result<()> {
+    decode_source_image(path, bytes)?;
+
+    Ok(())
+}
+
+pub(crate) fn decode_source_frame(path: &Path, bytes: &[u8]) -> Result<RenderedFrame> {
+    let image = decode_source_image(path, bytes)?;
+    let rgba = image.to_rgba8();
+
+    Ok(RenderedFrame::new(rgba.width(), rgba.height(), rgba.into_raw()))
 }
 
 fn load_normalized_image_with_rotation(
@@ -104,14 +110,7 @@ fn load_normalized_image_with_rotation(
     bytes: &[u8],
     rotation: Rotation,
 ) -> Result<DynamicImage> {
-    let format = ImageFormat::from_path(path)
-        .ok()
-        .or_else(|| image::guess_format(bytes).ok())
-        .context("failed to determine image format")?;
-    ensure_supported_format(path, format)?;
-
-    let decoded = image::load_from_memory_with_format(bytes, format)
-        .with_context(|| format!("failed to decode {}", path.display()))?;
+    let decoded = decode_source_image(path, bytes)?;
     Ok(normalize_image(path, decoded, rotation))
 }
 
@@ -153,6 +152,23 @@ pub(crate) fn prepare_dynamic_image(
     ))
 }
 
+pub(crate) fn prepare_rendered_frame(
+    source_path: std::path::PathBuf,
+    frame: RenderedFrame,
+    rotation: Rotation,
+) -> Result<PreparedImage> {
+    let image = rendered_frame_to_image(frame, rotation)?;
+    prepare_dynamic_image(source_path, image)
+}
+
+pub(crate) fn write_debug_frame(path: &Path, frame: &RenderedFrame) -> Result<()> {
+    let image = RgbaImage::from_raw(frame.width(), frame.height(), frame.rgba().to_vec())
+        .context("debug frame RGBA buffer did not match dimensions")?;
+    image
+        .save(path)
+        .with_context(|| format!("failed to save {}", path.display()))
+}
+
 fn ensure_supported_format(path: &Path, format: ImageFormat) -> Result<()> {
     if matches!(
         format,
@@ -169,6 +185,17 @@ fn ensure_supported_format(path: &Path, format: ImageFormat) -> Result<()> {
         "{} must be one of: bmp, ico, png, jpg/jpeg, webp",
         path.display()
     ))
+}
+
+fn decode_source_image(path: &Path, bytes: &[u8]) -> Result<DynamicImage> {
+    let format = ImageFormat::from_path(path)
+        .ok()
+        .or_else(|| image::guess_format(bytes).ok())
+        .context("failed to determine image format")?;
+    ensure_supported_format(path, format)?;
+
+    image::load_from_memory_with_format(bytes, format)
+        .with_context(|| format!("failed to decode {}", path.display()))
 }
 
 fn normalize_image(path: &Path, image: DynamicImage, rotation: Rotation) -> DynamicImage {
@@ -217,6 +244,19 @@ fn encode_jpeg(image: &DynamicImage, quality: u8) -> Result<Vec<u8>> {
     let mut encoder = JpegEncoder::new_with_quality(&mut output, quality);
     encoder.encode_image(&DynamicImage::ImageRgb8(rgb))?;
     Ok(output.into_inner())
+}
+
+fn rendered_frame_to_image(frame: RenderedFrame, rotation: Rotation) -> Result<DynamicImage> {
+    let image = RgbaImage::from_raw(frame.width(), frame.height(), frame.into_rgba())
+        .context("rendered RGBA buffer did not match dimensions")?;
+    let image = DynamicImage::ImageRgba8(image);
+
+    Ok(match rotation {
+        Rotation::Deg0 => image,
+        Rotation::Deg90 => image.rotate90(),
+        Rotation::Deg180 => image.rotate180(),
+        Rotation::Deg270 => image.rotate270(),
+    })
 }
 
 #[cfg(test)]
