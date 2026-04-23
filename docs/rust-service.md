@@ -186,6 +186,7 @@ rotate_degrees = 0
 
 [dashboard]
 render_interval_ms = 1000
+layout = "stack"
 time_format = "24h"
 temperature_unit = "celsius"
 # font_family = "Noto Sans"
@@ -220,8 +221,10 @@ init_on_connect = false
 - `refresh.interval_ms = 0` means continuous looping
 - `protocol.init_on_connect = false` is fine for my current cooler
 - `dashboard.slots` accepts `0..=4` configured slots
+- `dashboard.layout` defaults to `stack` and also supports `grid_2x2`
 - supported built-in slot metrics are `cpu_usage_percent`, `cpu_temperature`, `memory_used_percent`, and `time`
-- dashboard layout provides 4 fixed stacked slot positions with title and subtitle on the left and data on the right
+- `stack` provides 4 fixed top-aligned slot positions with title and subtitle on the left and data on the right
+- `grid_2x2` fills cards row-major in a 2x2 board using plain centered text over the background
 - dashboard text uses `font-kit` with UTF-8 support for Latin and common CJK text, but without complex-script shaping
 - `dashboard.font_path`, when set, overrides `dashboard.font_family`
 - if neither font setting is provided, the runtime tries a best-effort sans-serif fallback from system fonts

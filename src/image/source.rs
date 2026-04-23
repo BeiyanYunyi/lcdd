@@ -19,7 +19,8 @@ mod tests {
     use std::time::Duration;
 
     use crate::config::{
-        DashboardConfig, DashboardMetric, DashboardSlot, TemperatureUnit, TimeFormat,
+        DashboardConfig, DashboardLayout, DashboardMetric, DashboardSlot, TemperatureUnit,
+        TimeFormat,
     };
     use crate::image::{FrameSource, ImageSource, PrepareOptions, RefreshOutcome};
 
@@ -169,6 +170,7 @@ mod tests {
     fn sample_dashboard_config() -> DashboardConfig {
         DashboardConfig {
             render_interval_ms: 1000,
+            layout: DashboardLayout::Stack,
             time_format: TimeFormat::TwentyFourHour,
             temperature_unit: TemperatureUnit::Celsius,
             font_path: None,

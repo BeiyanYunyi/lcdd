@@ -188,6 +188,8 @@ pub struct DashboardConfig {
     #[serde(default = "default_dashboard_render_interval_ms")]
     pub render_interval_ms: u64,
     #[serde(default)]
+    pub layout: DashboardLayout,
+    #[serde(default)]
     pub time_format: TimeFormat,
     #[serde(default)]
     pub temperature_unit: TemperatureUnit,
@@ -209,7 +211,8 @@ impl DashboardConfig {
         );
         ensure!(
             self.slots.len() <= 4,
-            "dashboard supports at most 4 dashboard.slots entries; got {}",
+            "dashboard supports at most 4 dashboard.slots entries for {:?}; got {}",
+            self.layout,
             self.slots.len()
         );
 
@@ -238,6 +241,7 @@ impl Default for DashboardConfig {
     fn default() -> Self {
         Self {
             render_interval_ms: default_dashboard_render_interval_ms(),
+            layout: DashboardLayout::default(),
             time_format: TimeFormat::default(),
             temperature_unit: TemperatureUnit::default(),
             font_path: None,
@@ -246,6 +250,15 @@ impl Default for DashboardConfig {
             slots: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DashboardLayout {
+    #[default]
+    Stack,
+    #[serde(rename = "grid_2x2")]
+    Grid2x2,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -459,8 +472,9 @@ mod tests {
     use log::LevelFilter;
 
     use super::{
-        DashboardConfig, DashboardMetric, DashboardSlot, LoggingConfig, SourceConfig,
-        TemperatureUnit, TimeFormat, default_config_path, load_config, resolve_base_dir,
+        AppConfig, DashboardConfig, DashboardLayout, DashboardMetric, DashboardSlot, LoggingConfig,
+        SourceConfig, TemperatureUnit, TimeFormat, default_config_path, load_config,
+        resolve_base_dir,
     };
 
     #[cfg(unix)]
@@ -556,6 +570,7 @@ mod tests {
         let dashboard = DashboardConfig::default();
 
         assert_eq!(dashboard.render_interval_ms, 1000);
+        assert_eq!(dashboard.layout, DashboardLayout::Stack);
         assert_eq!(dashboard.time_format, TimeFormat::TwentyFourHour);
         assert_eq!(dashboard.temperature_unit, TemperatureUnit::Celsius);
         assert_eq!(dashboard.font_path, None);
@@ -569,6 +584,7 @@ mod tests {
     fn dashboard_accepts_zero_slots() {
         let dashboard = DashboardConfig {
             render_interval_ms: 1000,
+            layout: DashboardLayout::Stack,
             time_format: TimeFormat::TwentyFourHour,
             temperature_unit: TemperatureUnit::Celsius,
             font_path: None,
@@ -912,6 +928,7 @@ path = "./image.jpg"
     fn dashboard_accepts_partial_slot_list() {
         let dashboard = DashboardConfig {
             render_interval_ms: 1000,
+            layout: DashboardLayout::Stack,
             time_format: TimeFormat::TwentyFourHour,
             temperature_unit: TemperatureUnit::Celsius,
             font_path: None,
@@ -948,6 +965,7 @@ path = "./image.jpg"
     fn dashboard_rejects_more_than_four_slots() {
         let dashboard = DashboardConfig {
             render_interval_ms: 1000,
+            layout: DashboardLayout::Stack,
             time_format: TimeFormat::TwentyFourHour,
             temperature_unit: TemperatureUnit::Celsius,
             font_path: None,
@@ -969,6 +987,7 @@ path = "./image.jpg"
     fn dashboard_accepts_supported_configuration() {
         let dashboard = DashboardConfig {
             render_interval_ms: 1000,
+            layout: DashboardLayout::Stack,
             time_format: TimeFormat::TwentyFourHour,
             temperature_unit: TemperatureUnit::Celsius,
             font_path: None,
@@ -989,6 +1008,7 @@ path = "./image.jpg"
     fn dashboard_accepts_font_family() {
         let dashboard = DashboardConfig {
             render_interval_ms: 1000,
+            layout: DashboardLayout::Stack,
             time_format: TimeFormat::TwentyFourHour,
             temperature_unit: TemperatureUnit::Celsius,
             font_path: None,
@@ -1004,6 +1024,7 @@ path = "./image.jpg"
     fn dashboard_accepts_font_path() {
         let dashboard = DashboardConfig {
             render_interval_ms: 1000,
+            layout: DashboardLayout::Stack,
             time_format: TimeFormat::TwentyFourHour,
             temperature_unit: TemperatureUnit::Celsius,
             font_path: Some(PathBuf::from("/tmp/font.ttf")),
@@ -1019,6 +1040,7 @@ path = "./image.jpg"
     fn dashboard_rejects_empty_font_family() {
         let dashboard = DashboardConfig {
             render_interval_ms: 1000,
+            layout: DashboardLayout::Stack,
             time_format: TimeFormat::TwentyFourHour,
             temperature_unit: TemperatureUnit::Celsius,
             font_path: None,
@@ -1034,12 +1056,74 @@ path = "./image.jpg"
     fn dashboard_accepts_debug_output_path() {
         let dashboard = DashboardConfig {
             render_interval_ms: 1000,
+            layout: DashboardLayout::Stack,
             time_format: TimeFormat::TwentyFourHour,
             temperature_unit: TemperatureUnit::Celsius,
             font_path: None,
             font_family: None,
             debug_output_path: Some(PathBuf::from("/tmp/dashboard-debug.png")),
             slots: vec![slot("CPU", "usage", DashboardMetric::CpuUsagePercent)],
+        };
+
+        assert!(dashboard.validate().is_ok());
+    }
+
+    #[test]
+    fn dashboard_accepts_grid_2x2_layout() {
+        let parsed = Config::builder()
+            .add_source(File::from_str(
+                r#"
+[source]
+path = "/tmp/image.jpg"
+
+[dashboard]
+layout = "grid_2x2"
+"#,
+                FileFormat::Toml,
+            ))
+            .build()
+            .unwrap()
+            .try_deserialize::<AppConfig>()
+            .unwrap();
+
+        assert_eq!(parsed.dashboard.layout, DashboardLayout::Grid2x2);
+    }
+
+    #[test]
+    fn dashboard_rejects_invalid_layout() {
+        let parsed = Config::builder()
+            .add_source(File::from_str(
+                r#"
+[source]
+path = "/tmp/image.jpg"
+
+[dashboard]
+layout = "masonry"
+"#,
+                FileFormat::Toml,
+            ))
+            .build()
+            .unwrap()
+            .try_deserialize::<AppConfig>();
+
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn dashboard_grid_2x2_accepts_partial_slot_list() {
+        let dashboard = DashboardConfig {
+            render_interval_ms: 1000,
+            layout: DashboardLayout::Grid2x2,
+            time_format: TimeFormat::TwentyFourHour,
+            temperature_unit: TemperatureUnit::Celsius,
+            font_path: None,
+            font_family: None,
+            debug_output_path: None,
+            slots: vec![
+                slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
+                slot("TIME", "local", DashboardMetric::Time),
+                slot("MEM", "used", DashboardMetric::MemoryUsedPercent),
+            ],
         };
 
         assert!(dashboard.validate().is_ok());

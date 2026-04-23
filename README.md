@@ -199,6 +199,7 @@ rotate_degrees = 0
 
 [dashboard]
 render_interval_ms = 1000
+layout = "stack" # or "grid_2x2"
 time_format = "24h"
 temperature_unit = "celsius"
 # font_family = "Noto Sans"
@@ -251,7 +252,7 @@ Behavior summary:
 - sends the captured init packet on connect
 - packetizes the JPEG natively into `1024`-byte HID reports
 - decodes common image formats, optionally rotates them, and re-encodes to an internal JPEG
-- can render a live dashboard overlay with up to 4 fixed, top-aligned slots over a background image
+- can render a live dashboard overlay with up to 4 slots over a background image in either stacked or `2x2` grid layout
 - renders dashboard text through `font-kit`, with UTF-8 support for Latin and common CJK labels
 - collects built-in metrics for aggregate CPU usage, CPU temperature, memory usage, and local time
 - verifies the device ack after each upload

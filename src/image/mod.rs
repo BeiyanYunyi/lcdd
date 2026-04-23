@@ -1,5 +1,4 @@
 mod dashboard;
-mod dashboard_font;
 mod jpeg;
 mod packetize;
 mod prepare;
@@ -117,9 +116,6 @@ pub(crate) fn decode_source_frame(path: &Path, bytes: &[u8]) -> anyhow::Result<R
     prepare::decode_source_frame(path, bytes)
 }
 
-pub(crate) fn write_debug_frame(
-    path: &Path,
-    frame: &RenderedFrame,
-) -> anyhow::Result<()> {
+pub(crate) fn write_debug_frame(path: &Path, frame: &RenderedFrame) -> anyhow::Result<()> {
     prepare::write_debug_frame(path, frame)
 }

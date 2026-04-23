@@ -227,10 +227,12 @@ mod tests {
     use log::LevelFilter;
 
     use super::{ConfigReloadOutcome, RuntimeState};
-    use crate::config::{
-        AppConfig, DashboardConfig, DashboardMetric, DashboardSlot, DeviceConfig, LogLevel,
-        LoggingConfig, ProtocolConfig, RefreshConfig, SourceConfig, TemperatureUnit, TimeFormat,
+    use crate::config::schema::{
+        AppConfig, DashboardConfig, DashboardLayout, DashboardMetric, DashboardSlot, DeviceConfig,
+        LogLevel, LoggingConfig, ProtocolConfig, RefreshConfig, SourceConfig, TemperatureUnit,
+        TimeFormat,
     };
+
     #[test]
     fn apply_interval_change_without_reconnect() {
         let temp = test_dir("apply-interval-change");
@@ -477,6 +479,7 @@ mod tests {
     fn sample_dashboard_config() -> DashboardConfig {
         DashboardConfig {
             render_interval_ms: 1000,
+            layout: DashboardLayout::Stack,
             time_format: TimeFormat::TwentyFourHour,
             temperature_unit: TemperatureUnit::Celsius,
             font_path: None,

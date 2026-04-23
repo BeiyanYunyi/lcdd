@@ -1,14 +1,10 @@
-use std::io::Cursor;
-use std::path::Path;
-
-use anyhow::{Context, Result, anyhow};
-use image::codecs::jpeg::JpegEncoder;
-use image::imageops::{FilterType, overlay};
-use image::{DynamicImage, GenericImageView, ImageFormat, Rgb, RgbImage, RgbaImage};
-use log::warn;
-
 use crate::image::{PreparedImage, RenderedFrame, packetize_jpeg, validate_jpeg_for_lcd};
 use crate::protocol::{EXPECTED_JPEG_HEIGHT, EXPECTED_JPEG_WIDTH, MAX_SYNTHETIC_CHUNKS};
+use anyhow::{Context, Result, anyhow};
+use image::codecs::jpeg::JpegEncoder;
+use image::{DynamicImage, ImageFormat, RgbaImage};
+use std::io::Cursor;
+use std::path::Path;
 
 const JPEG_QUALITIES: [u8; 16] = [
     95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30, 25, 20,
@@ -23,8 +19,8 @@ pub enum Rotation {
     Deg270,
 }
 
+#[cfg(test)]
 impl Rotation {
-    #[allow(unused)]
     pub fn degrees(self) -> u16 {
         match self {
             Self::Deg0 => 0,
@@ -75,26 +71,8 @@ impl PrepareOptions {
     }
 }
 
-pub(crate) fn prepare_image_bytes(
-    path: &Path,
-    bytes: &[u8],
-    options: PrepareOptions,
-) -> Result<PreparedImage> {
-    let normalized = load_normalized_image(path, bytes, options)?;
-    prepare_dynamic_image(path.to_path_buf(), normalized)
-}
-
-pub(crate) fn load_normalized_image(
-    path: &Path,
-    bytes: &[u8],
-    options: PrepareOptions,
-) -> Result<DynamicImage> {
-    load_normalized_image_with_rotation(path, bytes, options.rotation)
-}
-
 pub(crate) fn validate_source_image(path: &Path, bytes: &[u8]) -> Result<()> {
     decode_source_image(path, bytes)?;
-
     Ok(())
 }
 
@@ -102,16 +80,11 @@ pub(crate) fn decode_source_frame(path: &Path, bytes: &[u8]) -> Result<RenderedF
     let image = decode_source_image(path, bytes)?;
     let rgba = image.to_rgba8();
 
-    Ok(RenderedFrame::new(rgba.width(), rgba.height(), rgba.into_raw()))
-}
-
-fn load_normalized_image_with_rotation(
-    path: &Path,
-    bytes: &[u8],
-    rotation: Rotation,
-) -> Result<DynamicImage> {
-    let decoded = decode_source_image(path, bytes)?;
-    Ok(normalize_image(path, decoded, rotation))
+    Ok(RenderedFrame::new(
+        rgba.width(),
+        rgba.height(),
+        rgba.into_raw(),
+    ))
 }
 
 pub(crate) fn prepare_dynamic_image(
@@ -198,46 +171,6 @@ fn decode_source_image(path: &Path, bytes: &[u8]) -> Result<DynamicImage> {
         .with_context(|| format!("failed to decode {}", path.display()))
 }
 
-fn normalize_image(path: &Path, image: DynamicImage, rotation: Rotation) -> DynamicImage {
-    let rotated = rotation.apply(image);
-    let (source_width, source_height) = rotated.dimensions();
-
-    if source_width != u32::from(EXPECTED_JPEG_WIDTH)
-        || source_height != u32::from(EXPECTED_JPEG_HEIGHT)
-    {
-        warn!(
-            "normalizing image {} from {}x{} to {}x{} with contain-and-pad",
-            path.display(),
-            source_width,
-            source_height,
-            EXPECTED_JPEG_WIDTH,
-            EXPECTED_JPEG_HEIGHT
-        );
-    }
-
-    let resized = rotated.resize(
-        u32::from(EXPECTED_JPEG_WIDTH),
-        u32::from(EXPECTED_JPEG_HEIGHT),
-        FilterType::Lanczos3,
-    );
-    let resized_rgb = resized.to_rgb8();
-    let offset_x = (u32::from(EXPECTED_JPEG_WIDTH) - resized_rgb.width()) / 2;
-    let offset_y = (u32::from(EXPECTED_JPEG_HEIGHT) - resized_rgb.height()) / 2;
-
-    let mut canvas = RgbImage::from_pixel(
-        u32::from(EXPECTED_JPEG_WIDTH),
-        u32::from(EXPECTED_JPEG_HEIGHT),
-        Rgb([0, 0, 0]),
-    );
-    overlay(
-        &mut canvas,
-        &resized_rgb,
-        i64::from(offset_x),
-        i64::from(offset_y),
-    );
-    DynamicImage::ImageRgb8(canvas)
-}
-
 fn encode_jpeg(image: &DynamicImage, quality: u8) -> Result<Vec<u8>> {
     let rgb = image.to_rgb8();
     let mut output = Cursor::new(Vec::new());
@@ -261,13 +194,86 @@ fn rendered_frame_to_image(frame: RenderedFrame, rotation: Rotation) -> Result<D
 
 #[cfg(test)]
 mod tests {
+    use super::{PrepareOptions, Rotation};
+    use crate::image::{
+        PreparedImage,
+        prepare::{decode_source_image, prepare_dynamic_image},
+    };
+    use crate::protocol::{EXPECTED_JPEG_HEIGHT, EXPECTED_JPEG_WIDTH};
+    use anyhow::Result;
+    use image::{
+        DynamicImage, GenericImageView, ImageFormat, Rgb, RgbImage,
+        imageops::{FilterType, overlay},
+    };
+    use log::warn;
     use std::io::Cursor;
     use std::path::Path;
 
-    use image::{DynamicImage, GenericImageView, ImageFormat, Rgb, RgbImage};
+    fn load_normalized_image(
+        path: &Path,
+        bytes: &[u8],
+        options: PrepareOptions,
+    ) -> Result<DynamicImage> {
+        load_normalized_image_with_rotation(path, bytes, options.rotation)
+    }
 
-    use super::{PrepareOptions, Rotation, normalize_image, prepare_image_bytes};
-    use crate::protocol::{EXPECTED_JPEG_HEIGHT, EXPECTED_JPEG_WIDTH};
+    fn normalize_image(path: &Path, image: DynamicImage, rotation: Rotation) -> DynamicImage {
+        let rotated = rotation.apply(image);
+        let (source_width, source_height) = rotated.dimensions();
+
+        if source_width != u32::from(EXPECTED_JPEG_WIDTH)
+            || source_height != u32::from(EXPECTED_JPEG_HEIGHT)
+        {
+            warn!(
+                "normalizing image {} from {}x{} to {}x{} with contain-and-pad",
+                path.display(),
+                source_width,
+                source_height,
+                EXPECTED_JPEG_WIDTH,
+                EXPECTED_JPEG_HEIGHT
+            );
+        }
+
+        let resized = rotated.resize(
+            u32::from(EXPECTED_JPEG_WIDTH),
+            u32::from(EXPECTED_JPEG_HEIGHT),
+            FilterType::Lanczos3,
+        );
+        let resized_rgb = resized.to_rgb8();
+        let offset_x = (u32::from(EXPECTED_JPEG_WIDTH) - resized_rgb.width()) / 2;
+        let offset_y = (u32::from(EXPECTED_JPEG_HEIGHT) - resized_rgb.height()) / 2;
+
+        let mut canvas = RgbImage::from_pixel(
+            u32::from(EXPECTED_JPEG_WIDTH),
+            u32::from(EXPECTED_JPEG_HEIGHT),
+            Rgb([0, 0, 0]),
+        );
+        overlay(
+            &mut canvas,
+            &resized_rgb,
+            i64::from(offset_x),
+            i64::from(offset_y),
+        );
+        DynamicImage::ImageRgb8(canvas)
+    }
+
+    fn load_normalized_image_with_rotation(
+        path: &Path,
+        bytes: &[u8],
+        rotation: Rotation,
+    ) -> Result<DynamicImage> {
+        let decoded = decode_source_image(path, bytes)?;
+        Ok(normalize_image(path, decoded, rotation))
+    }
+
+    fn prepare_image_bytes(
+        path: &Path,
+        bytes: &[u8],
+        options: PrepareOptions,
+    ) -> Result<PreparedImage> {
+        let normalized = load_normalized_image(path, bytes, options)?;
+        prepare_dynamic_image(path.to_path_buf(), normalized)
+    }
 
     #[test]
     fn prepare_pipeline_accepts_png_input() {

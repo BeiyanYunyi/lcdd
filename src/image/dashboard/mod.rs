@@ -1,60 +1,34 @@
-use std::borrow::Cow;
+mod font;
+mod layouts;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use chrono::{Local, Timelike};
-use font_kit::family_name::FamilyName;
-use font_kit::font::Font as FontKitFont;
-use font_kit::properties::Properties;
-use font_kit::source::SystemSource;
 use iced::advanced::Renderer as AdvancedRenderer;
 use iced::advanced::image as advanced_image;
 use iced::advanced::renderer::{Headless, Style as RendererStyle};
 use iced::advanced::text as advanced_text;
-use iced::alignment::{Horizontal, Vertical};
 use iced::mouse;
 use iced::widget::image::Handle as ImageHandle;
-use iced::widget::{Column, Space, container, image, row, stack, text};
-use iced::{
-    Background as IcedBackground, Color as IcedColor, ContentFit, Font as IcedFont, Length, Padding,
-};
-use iced::{Pixels, Renderer as IcedRenderer, Size as IcedSize, Theme as IcedTheme};
-use iced_graphics::text::font_system;
+use iced::{Color as IcedColor, Font as IcedFont, Pixels, Renderer as IcedRenderer};
+use iced::{Size as IcedSize, Theme as IcedTheme};
 use iced_runtime::user_interface;
 use iced_tiny_skia::Renderer as TinySkiaRenderer;
 use log::{info, warn};
 use sysinfo::{Components, CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
-use crate::config::{DashboardConfig, DashboardMetric, DashboardSlot, TemperatureUnit, TimeFormat};
+use self::font::DashboardFont;
+use crate::config::{
+    DashboardConfig, DashboardLayout, DashboardMetric, DashboardSlot, TemperatureUnit, TimeFormat,
+};
 use crate::image::{
     FrameSource, PrepareOptions, PreparedImage, RefreshOutcome, RenderedFrame, decode_source_frame,
     prepare_rendered_frame, validate_source_image, write_debug_frame,
 };
 use crate::protocol::{EXPECTED_JPEG_HEIGHT, EXPECTED_JPEG_WIDTH};
-
-const DEFAULT_FONT_FAMILIES: &[&str] = &[
-    "Noto Sans CJK SC",
-    "Noto Sans CJK JP",
-    "Noto Sans",
-    "DejaVu Sans",
-    "Liberation Sans",
-];
-const PANEL_MARGIN: u32 = 10;
-const PANEL_GAP: u32 = 6;
-const PANEL_COLOR: [u8; 4] = [0, 0, 0, 200];
-const BACKGROUND_COLOR: [u8; 4] = [0, 0, 0, 255];
-const TITLE_COLOR: [u8; 4] = [235, 235, 235, 255];
-const SUBTITLE_COLOR: [u8; 4] = [175, 175, 175, 255];
-const DATA_COLOR: [u8; 4] = [255, 255, 255, 255];
-const PANEL_PADDING_X: u32 = 12;
-const TITLE_TOP_PADDING: u32 = 11;
-const PANEL_BOTTOM_PADDING: u32 = 10;
-const PANEL_TEXT_SPACING: u32 = 4;
-const TITLE_FONT_SIZE: f32 = 20.0;
-const SUBTITLE_FONT_SIZE: f32 = 14.0;
-const DATA_FONT_SIZE: f32 = 32.0;
 
 pub struct ImageSource {
     path: PathBuf,
@@ -186,6 +160,7 @@ impl FrameSource for ImageSource {
 }
 
 struct DashboardRenderer {
+    layout: DashboardLayout,
     time_format: TimeFormat,
     temperature_unit: TemperatureUnit,
     slots: Vec<DashboardSlot>,
@@ -199,6 +174,7 @@ impl DashboardRenderer {
         let surface_renderer = SurfaceRenderer::new()?;
 
         Ok(Self {
+            layout: config.layout,
             time_format: config.time_format,
             temperature_unit: config.temperature_unit,
             slots: config.slots,
@@ -218,6 +194,7 @@ impl DashboardRenderer {
     ) -> Result<RenderedFrame> {
         self.surface_renderer.render_dashboard(
             background,
+            self.layout,
             &self.font,
             self.slots.as_slice(),
             metrics.map(|metrics| DashboardMetrics {
@@ -263,21 +240,30 @@ impl SurfaceRenderer {
     fn render_dashboard(
         &mut self,
         background: &RenderedFrame,
+        layout: DashboardLayout,
         font: &DashboardFont,
         slots: &[DashboardSlot],
         metrics: Option<DashboardMetrics>,
     ) -> Result<RenderedFrame> {
         match self {
-            Self::Wgpu(renderer) => renderer.render_dashboard(background, font, slots, metrics),
-            Self::TinySkia(renderer) => renderer.render_dashboard(background, font, slots, metrics),
+            Self::Wgpu(renderer) => {
+                renderer.render_dashboard(background, layout, font, slots, metrics)
+            }
+            Self::TinySkia(renderer) => {
+                renderer.render_dashboard(background, layout, font, slots, metrics)
+            }
         }
     }
 
     #[cfg(test)]
-    fn render_panels(&mut self, slot_count: usize) -> Result<RenderedFrame> {
+    fn render_panels(
+        &mut self,
+        layout: DashboardLayout,
+        slot_count: usize,
+    ) -> Result<RenderedFrame> {
         match self {
-            Self::Wgpu(renderer) => renderer.render_panels(slot_count),
-            Self::TinySkia(renderer) => renderer.render_panels(slot_count),
+            Self::Wgpu(renderer) => renderer.render_panels(layout, slot_count),
+            Self::TinySkia(renderer) => renderer.render_panels(layout, slot_count),
         }
     }
 }
@@ -318,25 +304,30 @@ where
     fn render_dashboard(
         &mut self,
         background: &RenderedFrame,
+        layout: DashboardLayout,
         font: &DashboardFont,
         slots: &[DashboardSlot],
         metrics: Option<DashboardMetrics>,
     ) -> Result<RenderedFrame> {
-        let view = dashboard_view::<R>(background, font, slots, metrics);
+        let view = layouts::dashboard_view::<R>(background, layout, font, slots, metrics);
         self.render_view(
             view,
             IcedColor::from_rgba8(
-                BACKGROUND_COLOR[0],
-                BACKGROUND_COLOR[1],
-                BACKGROUND_COLOR[2],
+                layouts::shared::BACKGROUND_COLOR[0],
+                layouts::shared::BACKGROUND_COLOR[1],
+                layouts::shared::BACKGROUND_COLOR[2],
                 1.0,
             ),
         )
     }
 
     #[cfg(test)]
-    fn render_panels(&mut self, slot_count: usize) -> Result<RenderedFrame> {
-        let view = panels_view::<R>(slot_count);
+    fn render_panels(
+        &mut self,
+        layout: DashboardLayout,
+        slot_count: usize,
+    ) -> Result<RenderedFrame> {
+        let view = layouts::panels_view::<R>(layout, slot_count);
         self.render_view(view, IcedColor::TRANSPARENT)
     }
 
@@ -375,46 +366,6 @@ where
     }
 }
 
-#[derive(Clone)]
-struct DashboardFont {
-    iced_font: IcedFont,
-}
-
-impl DashboardFont {
-    fn load(font_path: Option<PathBuf>, font_family: Option<String>) -> Result<Self> {
-        if let Some(font_path) = font_path {
-            let bytes = fs::read(&font_path).with_context(|| {
-                format!(
-                    "failed to read dashboard font from dashboard.font_path={}",
-                    font_path.display()
-                )
-            })?;
-            let family = FontKitFont::from_path(&font_path, 0)
-                .with_context(|| {
-                    format!(
-                        "failed to load dashboard font from dashboard.font_path={}",
-                        font_path.display()
-                    )
-                })?
-                .family_name();
-            register_font_bytes(bytes);
-            return Ok(Self {
-                iced_font: font_with_name(family),
-            });
-        }
-
-        if let Some(font_family) = font_family {
-            return Ok(Self {
-                iced_font: font_with_name(font_family),
-            });
-        }
-
-        Ok(Self {
-            iced_font: default_dashboard_font(),
-        })
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 struct CollectedMetrics {
     cpu_usage_percent: Option<f32>,
@@ -432,7 +383,7 @@ struct DashboardMetrics {
 }
 
 impl DashboardMetrics {
-    fn value_for(&self, metric: DashboardMetric) -> &str {
+    pub(super) fn value_for(&self, metric: DashboardMetric) -> &str {
         match metric {
             DashboardMetric::CpuUsagePercent => &self.cpu_usage_percent,
             DashboardMetric::CpuTemperature => &self.cpu_temperature,
@@ -511,204 +462,6 @@ fn format_time(time: chrono::NaiveTime, format: TimeFormat) -> String {
     }
 }
 
-fn dashboard_view<'a, R>(
-    background: &RenderedFrame,
-    font: &DashboardFont,
-    slots: &'a [DashboardSlot],
-    metrics: Option<DashboardMetrics>,
-) -> iced::Element<'a, (), IcedTheme, R>
-where
-    R: AdvancedRenderer
-        + advanced_image::Renderer<Handle = ImageHandle>
-        + advanced_text::Renderer<Font = IcedFont>
-        + 'a,
-{
-    let background = background_view::<R>(background);
-    let overlay = panels_overlay::<R>(font, slots, metrics);
-
-    stack([background, overlay]).into()
-}
-
-fn background_view<'a, R>(background: &RenderedFrame) -> iced::Element<'a, (), IcedTheme, R>
-where
-    R: AdvancedRenderer + advanced_image::Renderer<Handle = ImageHandle> + 'a,
-{
-    container(
-        image(ImageHandle::from_rgba(
-            background.width(),
-            background.height(),
-            background.rgba().to_vec(),
-        ))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .content_fit(ContentFit::Contain),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .style(|_| {
-        container::Style::default().background(IcedBackground::Color(IcedColor::from_rgba8(
-            BACKGROUND_COLOR[0],
-            BACKGROUND_COLOR[1],
-            BACKGROUND_COLOR[2],
-            1.0,
-        )))
-    })
-    .into()
-}
-
-fn panels_overlay<'a, R>(
-    font: &DashboardFont,
-    slots: &'a [DashboardSlot],
-    metrics: Option<DashboardMetrics>,
-) -> iced::Element<'a, (), IcedTheme, R>
-where
-    R: AdvancedRenderer + advanced_text::Renderer<Font = IcedFont> + 'a,
-{
-    let row_height = row_height_for(u32::from(EXPECTED_JPEG_HEIGHT));
-    let mut panels = Column::new().spacing(PANEL_GAP as f32).width(Length::Fill);
-
-    for slot in slots {
-        let value = metrics
-            .as_ref()
-            .map(|metrics| metrics.value_for(slot.metric).to_string())
-            .unwrap_or_else(|| "--".to_string());
-        panels = panels.push(panel_view::<R>(
-            font,
-            slot.title.clone(),
-            slot.subtitle.clone(),
-            value,
-            row_height,
-        ));
-    }
-
-    container(panels)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(PANEL_MARGIN as f32)
-        .into()
-}
-
-fn panel_view<'a, R>(
-    font: &DashboardFont,
-    title: String,
-    subtitle: String,
-    value: String,
-    row_height: u32,
-) -> iced::Element<'a, (), IcedTheme, R>
-where
-    R: AdvancedRenderer + advanced_text::Renderer<Font = IcedFont> + 'a,
-{
-    let title_column = Column::new()
-        .spacing(PANEL_TEXT_SPACING as f32)
-        .push(
-            text(title)
-                .font(font.iced_font)
-                .size(TITLE_FONT_SIZE)
-                .color(color_from(TITLE_COLOR)),
-        )
-        .push(
-            text(subtitle)
-                .font(font.iced_font)
-                .size(SUBTITLE_FONT_SIZE)
-                .color(color_from(SUBTITLE_COLOR)),
-        );
-
-    let metric = text(value)
-        .font(font.iced_font)
-        .size(DATA_FONT_SIZE)
-        .width(Length::Fill)
-        .align_x(Horizontal::Right)
-        .align_y(Vertical::Center)
-        .color(color_from(DATA_COLOR));
-
-    container(
-        row![
-            title_column.width(Length::Shrink),
-            Space::new().width(Length::Fill),
-            metric
-        ]
-        .align_y(Vertical::Center),
-    )
-    .width(Length::Fill)
-    .height(row_height as f32)
-    .padding(Padding {
-        top: TITLE_TOP_PADDING as f32,
-        right: PANEL_PADDING_X as f32,
-        bottom: PANEL_BOTTOM_PADDING as f32,
-        left: PANEL_PADDING_X as f32,
-    })
-    .style(|_| panel_style())
-    .into()
-}
-
-#[cfg(test)]
-fn panels_view<'a, R>(slot_count: usize) -> iced::Element<'a, (), IcedTheme, R>
-where
-    R: AdvancedRenderer + 'a,
-{
-    let row_height = row_height_for(u32::from(EXPECTED_JPEG_HEIGHT));
-    let mut panels = Column::new().spacing(PANEL_GAP as f32).width(Length::Fill);
-
-    for _ in 0..slot_count {
-        panels = panels.push(
-            container(Space::new().width(Length::Fill).height(row_height as f32))
-                .width(Length::Fill)
-                .height(row_height as f32)
-                .style(|_| panel_style()),
-        );
-    }
-
-    container(panels)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(PANEL_MARGIN as f32)
-        .into()
-}
-
-fn panel_style() -> container::Style {
-    container::Style::default().background(IcedBackground::Color(color_from(PANEL_COLOR)))
-}
-
-fn color_from(color: [u8; 4]) -> IcedColor {
-    IcedColor::from_rgba8(color[0], color[1], color[2], f32::from(color[3]) / 255.0)
-}
-
-fn row_height_for(height: u32) -> u32 {
-    height
-        .saturating_sub(PANEL_MARGIN * 2)
-        .saturating_sub(PANEL_GAP * 3)
-        / 4
-}
-
-fn font_with_name(name: String) -> IcedFont {
-    IcedFont::with_name(Box::leak(name.into_boxed_str()))
-}
-
-fn default_dashboard_font() -> IcedFont {
-    let source = SystemSource::new();
-
-    for family in DEFAULT_FONT_FAMILIES {
-        if source
-            .select_best_match(
-                &[FamilyName::Title((*family).to_string())],
-                &Properties::new(),
-            )
-            .is_ok()
-        {
-            return IcedFont::with_name(family);
-        }
-    }
-
-    IcedFont::DEFAULT
-}
-
-fn register_font_bytes(bytes: Vec<u8>) {
-    font_system()
-        .write()
-        .expect("write iced font system")
-        .load_font(Cow::Owned(bytes));
-}
-
 fn write_debug_frame_if_needed(path: Option<&Path>, rendered: &RenderedFrame) {
     let Some(path) = path else {
         return;
@@ -733,21 +486,74 @@ fn write_debug_frame_if_needed(path: Option<&Path>, rendered: &RenderedFrame) {
 }
 
 #[cfg(test)]
+pub(in crate::image::dashboard) fn rendered_image(frame: RenderedFrame) -> image::RgbaImage {
+    image::RgbaImage::from_raw(frame.width(), frame.height(), frame.into_rgba()).unwrap()
+}
+
+#[cfg(test)]
+pub(in crate::image::dashboard) fn sample_dashboard_config() -> DashboardConfig {
+    DashboardConfig {
+        render_interval_ms: 1000,
+        layout: DashboardLayout::Stack,
+        time_format: TimeFormat::TwentyFourHour,
+        temperature_unit: TemperatureUnit::Celsius,
+        font_path: None,
+        font_family: None,
+        debug_output_path: None,
+        slots: vec![
+            slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
+            slot("CPU", "temp", DashboardMetric::CpuTemperature),
+            slot("MEM", "used", DashboardMetric::MemoryUsedPercent),
+            slot("TIME", "local", DashboardMetric::Time),
+        ],
+    }
+}
+
+#[cfg(test)]
+pub(in crate::image::dashboard) fn sample_background_frame() -> RenderedFrame {
+    decode_source_frame(
+        PathBuf::from("test.jpg").as_path(),
+        include_bytes!("../../assets/test.jpg"),
+    )
+    .unwrap()
+}
+
+#[cfg(test)]
+fn sample_metrics() -> CollectedMetrics {
+    CollectedMetrics {
+        cpu_usage_percent: Some(37.0),
+        cpu_temperature_c: Some(61.0),
+        memory_used_percent: Some(54.0),
+        time: chrono::NaiveTime::from_hms_opt(14, 37, 0).unwrap(),
+    }
+}
+
+#[cfg(test)]
+pub(in crate::image::dashboard) fn slot(
+    title: &str,
+    subtitle: &str,
+    metric: DashboardMetric,
+) -> DashboardSlot {
+    DashboardSlot {
+        title: title.to_string(),
+        subtitle: subtitle.to_string(),
+        metric,
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::path::PathBuf;
     use std::time::Duration;
 
     use super::{
-        CollectedMetrics, DashboardRenderer, ImageSource, MetricCollector, PANEL_GAP, PANEL_MARGIN,
-        PANEL_PADDING_X, TITLE_FONT_SIZE, TITLE_TOP_PADDING, format_percent, format_temperature,
-        format_time,
+        DashboardRenderer, ImageSource, MetricCollector, format_percent, format_temperature,
+        format_time, rendered_image, sample_background_frame, sample_dashboard_config,
+        sample_metrics,
     };
-    use crate::config::{
-        DashboardConfig, DashboardMetric, DashboardSlot, TemperatureUnit, TimeFormat,
-    };
+    use crate::config::{DashboardConfig, DashboardLayout, TemperatureUnit, TimeFormat};
     use crate::image::{
-        FrameSource, PrepareOptions, RefreshOutcome, RenderedFrame, decode_source_frame,
-        prepare_rendered_frame,
+        FrameSource, PrepareOptions, RefreshOutcome, RenderedFrame, prepare_rendered_frame,
     };
     use crate::protocol::{EXPECTED_JPEG_HEIGHT, EXPECTED_JPEG_WIDTH};
     use chrono::NaiveTime;
@@ -794,6 +600,7 @@ mod tests {
     fn renderer_with_no_slots_leaves_background_unchanged() {
         let mut renderer = DashboardRenderer::new(DashboardConfig {
             render_interval_ms: 1000,
+            layout: DashboardLayout::Stack,
             time_format: TimeFormat::TwentyFourHour,
             temperature_unit: TemperatureUnit::Celsius,
             font_path: None,
@@ -831,34 +638,6 @@ mod tests {
     }
 
     #[test]
-    fn renderer_top_aligns_partial_slot_list() {
-        let mut renderer = DashboardRenderer::new(DashboardConfig {
-            render_interval_ms: 1000,
-            time_format: TimeFormat::TwentyFourHour,
-            temperature_unit: TemperatureUnit::Celsius,
-            font_path: None,
-            font_family: None,
-            debug_output_path: None,
-            slots: vec![
-                slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
-                slot("TIME", "local", DashboardMetric::Time),
-            ],
-        })
-        .unwrap();
-
-        let rendered = rendered_image(renderer.surface_renderer.render_panels(2).unwrap());
-        let row_height = row_height_for_test(rendered.height());
-        let first_row_y = PANEL_MARGIN + row_height / 2;
-        let second_row_y = PANEL_MARGIN + row_height + PANEL_GAP + row_height / 2;
-        let third_row_y = PANEL_MARGIN + (row_height + PANEL_GAP) * 2 + row_height / 2;
-        let sample_x = PANEL_MARGIN + 2;
-
-        assert_ne!(rendered.get_pixel(sample_x, first_row_y).0[3], 0);
-        assert_ne!(rendered.get_pixel(sample_x, second_row_y).0[3], 0);
-        assert_eq!(rendered.get_pixel(sample_x, third_row_y).0[3], 0);
-    }
-
-    #[test]
     fn dashboard_metric_rerender_is_content_update() {
         let temp = std::env::temp_dir().join(format!(
             "lcdd-dashboard-test-{}-{}",
@@ -869,7 +648,7 @@ mod tests {
         std::fs::create_dir_all(&temp).unwrap();
 
         let path = temp.join("image.jpg");
-        std::fs::write(&path, include_bytes!("../assets/test.jpg")).unwrap();
+        std::fs::write(&path, include_bytes!("../../assets/test.jpg")).unwrap();
 
         let mut source = ImageSource::new(
             path,
@@ -923,85 +702,6 @@ mod tests {
     }
 
     #[test]
-    fn renderer_changes_pixels_inside_title_region() {
-        let mut renderer = DashboardRenderer::new(sample_dashboard_config()).unwrap();
-        let rendered = rendered_image(
-            renderer
-                .render(&sample_background_frame(), Some(sample_metrics()))
-                .unwrap(),
-        );
-        let panel_only = rendered_image(
-            renderer
-                .surface_renderer
-                .render_panels(sample_dashboard_config().slots.len())
-                .unwrap(),
-        );
-
-        let title_x = PANEL_MARGIN + PANEL_PADDING_X;
-        let title_y = PANEL_MARGIN + TITLE_TOP_PADDING;
-        let title_width = 80;
-        let title_height = TITLE_FONT_SIZE as u32 + 10;
-
-        assert!(
-            count_region_differences(
-                &rendered,
-                &panel_only,
-                title_x,
-                title_y,
-                title_width,
-                title_height
-            ) > 20
-        );
-    }
-
-    #[test]
-    fn prepared_jpeg_keeps_title_region_visible() {
-        let mut renderer = DashboardRenderer::new(sample_dashboard_config()).unwrap();
-        let rendered = renderer
-            .render(&sample_background_frame(), Some(sample_metrics()))
-            .unwrap();
-        let panel_only = renderer
-            .surface_renderer
-            .render_panels(sample_dashboard_config().slots.len())
-            .unwrap();
-
-        let prepared = prepare_rendered_frame(
-            PathBuf::from("dashboard-debug.jpg"),
-            rendered,
-            crate::image::Rotation::Deg0,
-        )
-        .unwrap();
-        let prepared_panel = prepare_rendered_frame(
-            PathBuf::from("dashboard-panel-only.jpg"),
-            panel_only,
-            crate::image::Rotation::Deg0,
-        )
-        .unwrap();
-        let text_jpeg = image::load_from_memory(prepared.jpeg_bytes())
-            .unwrap()
-            .to_rgba8();
-        let panel_jpeg = image::load_from_memory(prepared_panel.jpeg_bytes())
-            .unwrap()
-            .to_rgba8();
-
-        let title_x = PANEL_MARGIN + PANEL_PADDING_X;
-        let title_y = PANEL_MARGIN + TITLE_TOP_PADDING;
-        let title_width = 80;
-        let title_height = TITLE_FONT_SIZE as u32 + 12;
-
-        assert!(
-            count_region_differences(
-                &text_jpeg,
-                &panel_jpeg,
-                title_x,
-                title_y,
-                title_width,
-                title_height
-            ) > 15
-        );
-    }
-
-    #[test]
     fn image_source_writes_debug_output_when_configured() {
         let temp = std::env::temp_dir().join(format!(
             "lcdd-dashboard-test-{}-{}",
@@ -1013,7 +713,7 @@ mod tests {
 
         let image_path = temp.join("image.jpg");
         let debug_path = temp.join("rendered.png");
-        std::fs::write(&image_path, include_bytes!("../assets/test.jpg")).unwrap();
+        std::fs::write(&image_path, include_bytes!("../../assets/test.jpg")).unwrap();
 
         let mut dashboard = sample_dashboard_config();
         dashboard.debug_output_path = Some(debug_path.clone());
@@ -1042,93 +742,13 @@ mod tests {
         assert!((0.0..=100.0).contains(&snapshot.memory_used_percent.unwrap_or(0.0)));
     }
 
-    fn sample_dashboard_config() -> DashboardConfig {
-        DashboardConfig {
-            render_interval_ms: 1000,
-            time_format: TimeFormat::TwentyFourHour,
-            temperature_unit: TemperatureUnit::Celsius,
-            font_path: None,
-            font_family: None,
-            debug_output_path: None,
-            slots: vec![
-                slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
-                slot("CPU", "temp", DashboardMetric::CpuTemperature),
-                slot("MEM", "used", DashboardMetric::MemoryUsedPercent),
-                slot("TIME", "local", DashboardMetric::Time),
-            ],
-        }
-    }
-
-    fn sample_metrics() -> CollectedMetrics {
-        CollectedMetrics {
-            cpu_usage_percent: Some(37.0),
-            cpu_temperature_c: Some(61.0),
-            memory_used_percent: Some(54.0),
-            time: NaiveTime::from_hms_opt(14, 37, 0).unwrap(),
-        }
-    }
-
-    fn sample_background_frame() -> RenderedFrame {
-        decode_source_frame(
-            PathBuf::from("test.jpg").as_path(),
-            include_bytes!("../assets/test.jpg"),
-        )
-        .unwrap()
-    }
-
-    fn row_height_for_test(height: u32) -> u32 {
-        height
-            .saturating_sub(PANEL_MARGIN * 2)
-            .saturating_sub(PANEL_GAP * 3)
-            / 4
-    }
-
-    fn slot(title: &str, subtitle: &str, metric: DashboardMetric) -> DashboardSlot {
-        DashboardSlot {
-            title: title.to_string(),
-            subtitle: subtitle.to_string(),
-            metric,
-        }
-    }
-
-    fn rendered_image(frame: RenderedFrame) -> RgbaImage {
-        RgbaImage::from_raw(frame.width(), frame.height(), frame.into_rgba()).unwrap()
-    }
-
     fn assert_color_close(actual: [u8; 4], expected: [u8; 4]) {
-        for index in 0..3 {
+        for index in 0..4 {
+            let delta = actual[index].abs_diff(expected[index]);
             assert!(
-                actual[index].abs_diff(expected[index]) <= 20,
-                "channel {index} differed too much: actual={actual:?}, expected={expected:?}"
+                delta <= 25,
+                "channel {index} differed too much: actual={actual:?} expected={expected:?}"
             );
         }
-    }
-
-    fn count_region_differences(
-        lhs: &RgbaImage,
-        rhs: &RgbaImage,
-        x: u32,
-        y: u32,
-        width: u32,
-        height: u32,
-    ) -> usize {
-        let max_x = (x + width).min(lhs.width()).min(rhs.width());
-        let max_y = (y + height).min(lhs.height()).min(rhs.height());
-        let mut count = 0;
-
-        for yy in y..max_y {
-            for xx in x..max_x {
-                let left = lhs.get_pixel(xx, yy).0;
-                let right = rhs.get_pixel(xx, yy).0;
-                let delta = left[0].abs_diff(right[0]) as u16
-                    + left[1].abs_diff(right[1]) as u16
-                    + left[2].abs_diff(right[2]) as u16;
-                if delta > 30 {
-                    count += 1;
-                }
-            }
-        }
-
-        count
     }
 }

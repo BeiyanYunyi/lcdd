@@ -1,15 +1,15 @@
+use std::borrow::Cow;
+use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
-use font_kit::canvas::{Canvas, Format, RasterizationOptions};
+
 use font_kit::family_name::FamilyName;
-use font_kit::font::Font;
-use font_kit::hinting::HintingOptions;
+use font_kit::font::{Font, Font as FontKitFont};
 use font_kit::properties::Properties;
 use font_kit::source::SystemSource;
-use image::{Pixel, Rgba, RgbaImage};
-use pathfinder_geometry::transform2d::Transform2F;
-use pathfinder_geometry::vector::{Vector2F, Vector2I};
+use iced::Font as IcedFont;
+use iced_graphics::text::font_system;
 
 const DEFAULT_FONT_FAMILIES: &[&str] = &[
     "Noto Sans CJK SC",
@@ -19,42 +19,84 @@ const DEFAULT_FONT_FAMILIES: &[&str] = &[
     "Liberation Sans",
 ];
 
-pub(crate) struct DashboardFont {
+#[derive(Clone)]
+pub(in crate::image::dashboard) struct DashboardFont {
+    pub(super) iced_font: IcedFont,
+    #[cfg(test)]
     font: Font,
+    #[cfg(test)]
     replacement_glyph_id: Option<u32>,
 }
 
 impl DashboardFont {
-    pub(crate) fn load(font_path: Option<PathBuf>, font_family: Option<String>) -> Result<Self> {
-        let font = if let Some(font_path) = font_path {
-            Font::from_path(&font_path, 0).with_context(|| {
-                format!(
-                    "failed to load dashboard font from dashboard.font_path={}",
-                    font_path.display()
-                )
-            })?
-        } else if let Some(font_family) = font_family {
-            Self::load_system_family(&font_family).with_context(|| {
-                format!("failed to resolve dashboard.font_family={font_family:?} via system fonts")
-            })?
-        } else {
-            Self::load_default_family()
-                .context("failed to resolve a default dashboard sans-serif font from the system")?
+    pub(super) fn load(font_path: Option<PathBuf>, font_family: Option<String>) -> Result<Self> {
+        let load_font = || -> Result<(Font, IcedFont)> {
+            if let Some(font_path) = font_path {
+                let bytes = fs::read(&font_path).with_context(|| {
+                    format!(
+                        "failed to read dashboard font from dashboard.font_path={}",
+                        font_path.display()
+                    )
+                })?;
+                let family = FontKitFont::from_path(&font_path, 0)
+                    .with_context(|| {
+                        format!(
+                            "failed to load dashboard font from dashboard.font_path={}",
+                            font_path.display()
+                        )
+                    })?
+                    .family_name();
+                register_font_bytes(bytes);
+                Ok((
+                    Font::from_path(&font_path, 0).with_context(|| {
+                        format!(
+                            "failed to load dashboard font from dashboard.font_path={}",
+                            font_path.display()
+                        )
+                    })?,
+                    font_with_name(family),
+                ))
+            } else if let Some(font_family) = font_family {
+                Ok((
+                    Self::load_system_family(&font_family).with_context(|| {
+                        format!(
+                            "failed to resolve dashboard.font_family={font_family:?} via system fonts"
+                        )
+                    })?,
+                    font_with_name(font_family),
+                ))
+            } else {
+                let (font, family) = Self::load_default_family().context(
+                    "failed to resolve a default dashboard sans-serif font from the system",
+                )?;
+                Ok((font, IcedFont::with_name(family)))
+            }
         };
 
+        #[cfg(test)]
+        let (font, iced_font) = load_font()?;
+
+        #[cfg(not(test))]
+        let (_font, iced_font) = load_font()?;
+
+        #[cfg(test)]
         let replacement_glyph_id = font
             .glyph_for_char('\u{fffd}')
             .or_else(|| font.glyph_for_char('?'));
 
         Ok(Self {
+            iced_font,
+            #[cfg(test)]
             font,
+            #[cfg(test)]
             replacement_glyph_id,
         })
     }
 
-    pub(crate) fn draw_text(
+    #[cfg(test)]
+    fn draw_text(
         &self,
-        image: &mut RgbaImage,
+        image: &mut image::RgbaImage,
         x: u32,
         y: u32,
         font_size: f32,
@@ -72,7 +114,8 @@ impl DashboardFont {
         }
     }
 
-    pub(crate) fn measure_text_width(&self, text: &str, font_size: f32) -> u32 {
+    #[cfg(test)]
+    fn measure_text_width(&self, text: &str, font_size: f32) -> u32 {
         text.chars()
             .filter_map(|ch| self.resolve_glyph(ch))
             .map(|glyph_id| self.advance_width(glyph_id, font_size))
@@ -90,36 +133,44 @@ impl DashboardFont {
         handle.load().map_err(|error| anyhow!("{error:?}"))
     }
 
-    fn load_default_family() -> Result<Font> {
+    fn load_default_family() -> Result<(Font, &'static str)> {
         let source = SystemSource::new();
         for family in DEFAULT_FONT_FAMILIES {
             if let Ok(handle) = source.select_best_match(
                 &[FamilyName::Title((*family).to_string())],
                 &Properties::new(),
             ) {
-                return handle.load().map_err(|error| anyhow!("{error:?}"));
+                return Ok((handle.load().map_err(|error| anyhow!("{error:?}"))?, family));
             }
         }
 
         let handle = source
             .select_best_match(&[FamilyName::SansSerif], &Properties::new())
             .map_err(|error| anyhow!("{error:?}"))?;
-        handle.load().map_err(|error| anyhow!("{error:?}"))
+        let font = handle.load().map_err(|error| anyhow!("{error:?}"))?;
+        let family = Box::leak(font.family_name().into_boxed_str());
+        Ok((font, family))
     }
 
+    #[cfg(test)]
     fn ascent(&self, font_size: f32) -> f32 {
         self.scaled_metrics(font_size).ascent
     }
 
+    #[cfg(test)]
     fn draw_glyph(
         &self,
-        image: &mut RgbaImage,
+        image: &mut image::RgbaImage,
         glyph_id: u32,
         baseline_x: f32,
         baseline_y: f32,
         font_size: f32,
         color: [u8; 4],
     ) {
+        use font_kit::canvas::{Canvas, Format, RasterizationOptions};
+        use font_kit::hinting::HintingOptions;
+        use pathfinder_geometry::transform2d::Transform2F;
+        use pathfinder_geometry::vector::{Vector2F, Vector2I};
         let transform = Transform2F::from_translation(Vector2F::new(baseline_x, baseline_y));
         let Ok(bounds) = self.font.raster_bounds(
             glyph_id,
@@ -176,10 +227,12 @@ impl DashboardFont {
         }
     }
 
+    #[cfg(test)]
     fn resolve_glyph(&self, ch: char) -> Option<u32> {
         self.font.glyph_for_char(ch).or(self.replacement_glyph_id)
     }
 
+    #[cfg(test)]
     fn advance_width(&self, glyph_id: u32, font_size: f32) -> f32 {
         self.font
             .advance(glyph_id)
@@ -187,6 +240,7 @@ impl DashboardFont {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
     fn scaled_metrics(&self, font_size: f32) -> ScaledFontMetrics {
         let metrics = self.font.metrics();
         let scale = self.scale(font_size);
@@ -195,6 +249,7 @@ impl DashboardFont {
         }
     }
 
+    #[cfg(test)]
     fn scale(&self, font_size: f32) -> f32 {
         let units_per_em = self.font.metrics().units_per_em;
         if units_per_em == 0 {
@@ -204,11 +259,25 @@ impl DashboardFont {
     }
 }
 
+fn font_with_name(name: String) -> IcedFont {
+    IcedFont::with_name(Box::leak(name.into_boxed_str()))
+}
+
+fn register_font_bytes(bytes: Vec<u8>) {
+    font_system()
+        .write()
+        .expect("write iced font system")
+        .load_font(Cow::Owned(bytes));
+}
+
+#[cfg(test)]
 struct ScaledFontMetrics {
     ascent: f32,
 }
 
-fn blend_pixel(image: &mut RgbaImage, x: u32, y: u32, color: [u8; 4]) {
+#[cfg(test)]
+fn blend_pixel(image: &mut image::RgbaImage, x: u32, y: u32, color: [u8; 4]) {
+    use image::{Pixel, Rgba};
     let alpha = color[3] as f32 / 255.0;
     let base = image.get_pixel(x, y).channels();
     let blended = [
@@ -220,6 +289,7 @@ fn blend_pixel(image: &mut RgbaImage, x: u32, y: u32, color: [u8; 4]) {
     image.put_pixel(x, y, Rgba(blended));
 }
 
+#[cfg(test)]
 fn blend_channel(base: u8, over: u8, alpha: f32) -> u8 {
     ((base as f32 * (1.0 - alpha)) + (over as f32 * alpha)).round() as u8
 }
