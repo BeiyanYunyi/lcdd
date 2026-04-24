@@ -40,7 +40,7 @@ where
     R: AdvancedRenderer + advanced_text::Renderer<Font = IcedFont> + 'a,
 {
     let top = row![
-        grid_cell_view::<R>(font, slots.get(0), metrics.as_ref()),
+        grid_cell_view::<R>(font, slots.first(), metrics.as_ref()),
         Space::new().width(Length::Fixed(f32::from(GRID_COLUMN_GAP))),
         grid_cell_view::<R>(font, slots.get(1), metrics.as_ref())
     ]
