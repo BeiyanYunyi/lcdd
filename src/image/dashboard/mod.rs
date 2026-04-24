@@ -21,9 +21,7 @@ use log::{info, warn};
 use sysinfo::{Components, CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
 use self::font::DashboardFont;
-use crate::config::{
-    DashboardConfig, DashboardLayout, DashboardMetric, DashboardSlot, TemperatureUnit, TimeFormat,
-};
+use crate::config::{DashboardConfig, DashboardLayout, DashboardMetric, DashboardSlot, TimeFormat};
 use crate::image::{
     FrameSource, PrepareOptions, PreparedImage, RefreshOutcome, RenderedFrame, decode_source_frame,
     prepare_rendered_frame, validate_source_image, write_debug_frame,
@@ -162,7 +160,6 @@ impl FrameSource for ImageSource {
 struct DashboardRenderer {
     layout: DashboardLayout,
     time_format: TimeFormat,
-    temperature_unit: TemperatureUnit,
     slots: Vec<DashboardSlot>,
     font: DashboardFont,
     surface_renderer: SurfaceRenderer,
@@ -176,7 +173,6 @@ impl DashboardRenderer {
         Ok(Self {
             layout: config.layout,
             time_format: config.time_format,
-            temperature_unit: config.temperature_unit,
             slots: config.slots,
             font,
             surface_renderer,
@@ -198,12 +194,9 @@ impl DashboardRenderer {
             &self.font,
             self.slots.as_slice(),
             metrics.map(|metrics| DashboardMetrics {
-                cpu_usage_percent: format_percent(metrics.cpu_usage_percent),
-                cpu_temperature: format_temperature(
-                    metrics.cpu_temperature_c,
-                    self.temperature_unit,
-                ),
-                memory_used_percent: format_percent(metrics.memory_used_percent),
+                cpu_usage_percent: format_metric_value(metrics.cpu_usage_percent),
+                cpu_temperature: format_metric_value(metrics.cpu_temperature_c),
+                memory_used_percent: format_metric_value(metrics.memory_used_percent),
                 time: format_time(metrics.time, self.time_format),
             }),
         )
@@ -443,17 +436,10 @@ fn pick_cpu_temperature(components: &Components) -> Option<f32> {
         .and_then(|component| component.temperature())
 }
 
-fn format_percent(value: Option<f32>) -> String {
+fn format_metric_value(value: Option<f32>) -> String {
     value
-        .map(|value| format!("{}%", value.round() as i32))
+        .map(|value| format!("{value:.1}"))
         .unwrap_or_else(|| "--".to_string())
-}
-
-fn format_temperature(value_c: Option<f32>, unit: TemperatureUnit) -> String {
-    match (value_c, unit) {
-        (Some(value), TemperatureUnit::Celsius) => format!("{}°C", value.round() as i32),
-        (None, _) => "--".to_string(),
-    }
 }
 
 fn format_time(time: chrono::NaiveTime, format: TimeFormat) -> String {
@@ -467,14 +453,14 @@ fn write_debug_frame_if_needed(path: Option<&Path>, rendered: &RenderedFrame) {
         return;
     };
 
-    if let Some(parent) = path.parent() {
-        if let Err(error) = fs::create_dir_all(parent) {
-            warn!(
-                "failed to create dashboard debug output directory {}: {error:#}",
-                parent.display()
-            );
-            return;
-        }
+    if let Some(parent) = path.parent()
+        && let Err(error) = fs::create_dir_all(parent)
+    {
+        warn!(
+            "failed to create dashboard debug output directory {}: {error:#}",
+            parent.display()
+        );
+        return;
     }
 
     if let Err(error) = write_debug_frame(path, rendered) {
@@ -492,6 +478,7 @@ pub(in crate::image::dashboard) fn rendered_image(frame: RenderedFrame) -> image
 
 #[cfg(test)]
 pub(in crate::image::dashboard) fn sample_dashboard_config() -> DashboardConfig {
+    use crate::config::TemperatureUnit;
     DashboardConfig {
         render_interval_ms: 1000,
         layout: DashboardLayout::Stack,
@@ -501,9 +488,9 @@ pub(in crate::image::dashboard) fn sample_dashboard_config() -> DashboardConfig 
         font_family: None,
         debug_output_path: None,
         slots: vec![
-            slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
-            slot("CPU", "temp", DashboardMetric::CpuTemperature),
-            slot("MEM", "used", DashboardMetric::MemoryUsedPercent),
+            slot("CPU", "usage %", DashboardMetric::CpuUsagePercent),
+            slot("CPU", "temp C", DashboardMetric::CpuTemperature),
+            slot("MEM", "used %", DashboardMetric::MemoryUsedPercent),
             slot("TIME", "local", DashboardMetric::Time),
         ],
     }
@@ -547,9 +534,8 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        DashboardRenderer, ImageSource, MetricCollector, format_percent, format_temperature,
-        format_time, rendered_image, sample_background_frame, sample_dashboard_config,
-        sample_metrics,
+        DashboardRenderer, ImageSource, MetricCollector, format_metric_value, format_time,
+        rendered_image, sample_background_frame, sample_dashboard_config, sample_metrics,
     };
     use crate::config::{DashboardConfig, DashboardLayout, TemperatureUnit, TimeFormat};
     use crate::image::{
@@ -560,18 +546,26 @@ mod tests {
     use image::{Rgba, RgbaImage};
 
     #[test]
-    fn percent_formatting_rounds_to_integer() {
-        assert_eq!(format_percent(Some(36.6)), "37%");
-        assert_eq!(format_percent(None), "--");
+    fn metric_value_formatting_uses_one_decimal_without_suffix() {
+        assert_eq!(format_metric_value(Some(36.6)), "36.6");
+        assert_eq!(format_metric_value(None), "--");
     }
 
     #[test]
-    fn temperature_formatting_handles_missing_values() {
-        assert_eq!(
-            format_temperature(Some(61.2), TemperatureUnit::Celsius),
-            "61°C"
-        );
-        assert_eq!(format_temperature(None, TemperatureUnit::Celsius), "--");
+    fn renderer_formats_temperature_without_helper() {
+        let metrics = sample_metrics();
+        let formatted = metrics
+            .cpu_temperature_c
+            .map(|value| format!("{}", value.round() as i32))
+            .unwrap_or_else(|| "--".to_string());
+
+        assert_eq!(formatted, "61");
+
+        let missing = None::<f32>
+            .map(|value| format!("{}", value.round() as i32))
+            .unwrap_or_else(|| "--".to_string());
+
+        assert_eq!(missing, "--");
     }
 
     #[test]

@@ -195,7 +195,7 @@ temperature_unit = "celsius"
 
 [[dashboard.slots]]
 title = "CPU"
-subtitle = "usage"
+subtitle = "usage %"
 metric = "cpu_usage_percent"
 
 [refresh]
@@ -223,6 +223,7 @@ init_on_connect = false
 - `dashboard.slots` accepts `0..=4` configured slots
 - `dashboard.layout` defaults to `stack` and also supports `grid_2x2`
 - supported built-in slot metrics are `cpu_usage_percent`, `cpu_temperature`, `memory_used_percent`, and `time`
+- percent and temperature metrics render numeric values without automatic unit suffixes; include units directly in `dashboard.slots[].subtitle` when desired
 - `stack` provides 4 fixed top-aligned slot positions with title and subtitle on the left and data on the right
 - `grid_2x2` fills cards row-major in a 2x2 board using plain centered text over the background
 - dashboard text uses `font-kit` with UTF-8 support for Latin and common CJK text, but without complex-script shaping

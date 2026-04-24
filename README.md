@@ -84,7 +84,7 @@ Import it from your Home Manager setup:
               dashboard.slots = [
                 {
                   title = "CPU";
-                  subtitle = "usage";
+                  subtitle = "usage %";
                   metric = "cpu_usage_percent";
                 }
               ];
@@ -208,7 +208,7 @@ temperature_unit = "celsius"
 
 [[dashboard.slots]]
 title = "CPU"
-subtitle = "usage"
+subtitle = "usage %"
 metric = "cpu_usage_percent"
 
 [refresh]
