@@ -62,7 +62,10 @@
           packages.default =
             with pkgs;
             let
-              assetFilter = path: _type: builtins.match ".*/assets/test.jpg$" path != null;
+              assetFilter =
+                path: _type:
+                (builtins.match ".*/assets/test.jpg$" path != null)
+                || (builtins.match ".*/src/image/dashboard/blur.wgsl$" path != null);
               assetOrCargo = path: type: (assetFilter path type) || (craneLib.filterCargoSources path type);
             in
             craneLib.buildPackage {

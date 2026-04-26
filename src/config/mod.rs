@@ -3,6 +3,7 @@ mod schema;
 
 pub use runtime::{ConfigReloadOutcome, RuntimeState};
 pub use schema::{
-    AppConfig, DashboardConfig, DashboardLayout, DashboardMetric, DashboardSlot, DeviceConfig,
-    LoggingConfig, TemperatureUnit, TimeFormat, load_config, resolve_config_path,
+    AppConfig, DashboardAcrylicConfig, DashboardConfig, DashboardLayout, DashboardMetric,
+    DashboardSlot, DeviceConfig, LoggingConfig, TemperatureUnit, TimeFormat, load_config,
+    resolve_config_path,
 };

@@ -1,3 +1,4 @@
+mod acrylic;
 mod font;
 mod layouts;
 
@@ -20,8 +21,13 @@ use iced_tiny_skia::Renderer as TinySkiaRenderer;
 use log::{info, warn};
 use sysinfo::{Components, CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
+use self::acrylic::{AcrylicFrameCache, WgpuAcrylicCompositor};
 use self::font::DashboardFont;
-use crate::config::{DashboardConfig, DashboardLayout, DashboardMetric, DashboardSlot, TimeFormat};
+use self::layouts::PanelVisualStyle;
+use crate::config::{
+    DashboardAcrylicConfig, DashboardConfig, DashboardLayout, DashboardMetric, DashboardSlot,
+    TimeFormat,
+};
 use crate::image::{
     FrameSource, PrepareOptions, PreparedImage, RefreshOutcome, RenderedFrame, decode_source_frame,
     prepare_rendered_frame, validate_source_image, write_debug_frame,
@@ -158,6 +164,7 @@ impl FrameSource for ImageSource {
 }
 
 struct DashboardRenderer {
+    acrylic: DashboardAcrylicConfig,
     layout: DashboardLayout,
     time_format: TimeFormat,
     slots: Vec<DashboardSlot>,
@@ -167,10 +174,12 @@ struct DashboardRenderer {
 
 impl DashboardRenderer {
     fn new(config: DashboardConfig) -> Result<Self> {
+        let acrylic = config.acrylic;
         let font = DashboardFont::load(config.font_path, config.font_family)?;
-        let surface_renderer = SurfaceRenderer::new()?;
+        let surface_renderer = SurfaceRenderer::new(acrylic.enabled)?;
 
         Ok(Self {
+            acrylic,
             layout: config.layout,
             time_format: config.time_format,
             slots: config.slots,
@@ -190,6 +199,7 @@ impl DashboardRenderer {
     ) -> Result<RenderedFrame> {
         self.surface_renderer.render_dashboard(
             background,
+            self.acrylic,
             self.layout,
             &self.font,
             self.slots.as_slice(),
@@ -203,14 +213,23 @@ impl DashboardRenderer {
     }
 }
 
+#[cfg_attr(test, allow(dead_code))]
 enum SurfaceRenderer {
-    Wgpu(IcedSurfaceRenderer<IcedRenderer>),
+    Wgpu(WgpuSurfaceRenderer),
     TinySkia(IcedSurfaceRenderer<TinySkiaRenderer>),
 }
 
 impl SurfaceRenderer {
-    fn new() -> Result<Self> {
-        match IcedSurfaceRenderer::<IcedRenderer>::new(Some("wgpu")) {
+    #[cfg(test)]
+    fn new(_acrylic_enabled: bool) -> Result<Self> {
+        Ok(Self::TinySkia(IcedSurfaceRenderer::<TinySkiaRenderer>::new(
+            Some("tiny-skia"),
+        )?))
+    }
+
+    #[cfg(not(test))]
+    fn new(acrylic_enabled: bool) -> Result<Self> {
+        match WgpuSurfaceRenderer::new() {
             Ok(renderer) => Ok(Self::Wgpu(renderer)),
             Err(wgpu_error) => {
                 match IcedSurfaceRenderer::<TinySkiaRenderer>::new(Some("tiny-skia")) {
@@ -218,6 +237,11 @@ impl SurfaceRenderer {
                         warn!(
                             "failed to initialize iced wgpu headless renderer, using iced tiny-skia instead: {wgpu_error:#}"
                         );
+                        if acrylic_enabled {
+                            warn!(
+                                "dashboard acrylic was requested but is unavailable on iced tiny-skia; using flat translucent panels instead"
+                            );
+                        }
                         Ok(Self::TinySkia(renderer))
                     }
                     Err(tiny_skia_error) => Err(tiny_skia_error).with_context(|| {
@@ -233,6 +257,7 @@ impl SurfaceRenderer {
     fn render_dashboard(
         &mut self,
         background: &RenderedFrame,
+        acrylic: DashboardAcrylicConfig,
         layout: DashboardLayout,
         font: &DashboardFont,
         slots: &[DashboardSlot],
@@ -240,10 +265,17 @@ impl SurfaceRenderer {
     ) -> Result<RenderedFrame> {
         match self {
             Self::Wgpu(renderer) => {
-                renderer.render_dashboard(background, layout, font, slots, metrics)
+                renderer.render_dashboard(background, acrylic, layout, font, slots, metrics)
             }
             Self::TinySkia(renderer) => {
-                renderer.render_dashboard(background, layout, font, slots, metrics)
+                renderer.render_dashboard(
+                    background,
+                    acrylic,
+                    layout,
+                    font,
+                    slots,
+                    metrics,
+                )
             }
         }
     }
@@ -297,12 +329,20 @@ where
     fn render_dashboard(
         &mut self,
         background: &RenderedFrame,
+        _acrylic: DashboardAcrylicConfig,
         layout: DashboardLayout,
         font: &DashboardFont,
         slots: &[DashboardSlot],
         metrics: Option<DashboardMetrics>,
     ) -> Result<RenderedFrame> {
-        let view = layouts::dashboard_view::<R>(background, layout, font, slots, metrics);
+        let view = layouts::dashboard_view::<R>(
+            background,
+            layout,
+            font,
+            slots,
+            metrics,
+            PanelVisualStyle::Flat,
+        );
         self.render_view(
             view,
             IcedColor::from_rgba8(
@@ -356,6 +396,74 @@ where
                 clear_color,
             ),
         ))
+    }
+}
+
+#[cfg_attr(test, allow(dead_code))]
+struct WgpuSurfaceRenderer {
+    iced: IcedSurfaceRenderer<IcedRenderer>,
+    acrylic_compositor: WgpuAcrylicCompositor,
+    acrylic_cache: AcrylicFrameCache,
+}
+
+#[cfg_attr(test, allow(dead_code))]
+impl WgpuSurfaceRenderer {
+    fn new() -> Result<Self> {
+        Ok(Self {
+            iced: IcedSurfaceRenderer::<IcedRenderer>::new(Some("wgpu"))?,
+            acrylic_compositor: WgpuAcrylicCompositor::new()?,
+            acrylic_cache: AcrylicFrameCache::new(),
+        })
+    }
+
+    fn render_dashboard(
+        &mut self,
+        background: &RenderedFrame,
+        acrylic: DashboardAcrylicConfig,
+        layout: DashboardLayout,
+        font: &DashboardFont,
+        slots: &[DashboardSlot],
+        metrics: Option<DashboardMetrics>,
+    ) -> Result<RenderedFrame> {
+        if !acrylic.enabled || slots.is_empty() {
+            return self
+                .iced
+                .render_dashboard(background, acrylic, layout, font, slots, metrics);
+        }
+
+        let acrylic_background = self.acrylic_cache.get_or_build(
+            &mut self.acrylic_compositor,
+            background,
+            &layouts::panel_geometries(layout, slots.len()),
+            acrylic,
+        )?;
+        let view = layouts::dashboard_view::<IcedRenderer>(
+            &acrylic_background,
+            layout,
+            font,
+            slots,
+            metrics,
+            PanelVisualStyle::TextOnly,
+        );
+
+        self.iced.render_view(
+            view,
+            IcedColor::from_rgba8(
+                layouts::shared::BACKGROUND_COLOR[0],
+                layouts::shared::BACKGROUND_COLOR[1],
+                layouts::shared::BACKGROUND_COLOR[2],
+                1.0,
+            ),
+        )
+    }
+
+    #[cfg(test)]
+    fn render_panels(
+        &mut self,
+        layout: DashboardLayout,
+        slot_count: usize,
+    ) -> Result<RenderedFrame> {
+        self.iced.render_panels(layout, slot_count)
     }
 }
 
@@ -487,6 +595,7 @@ pub(in crate::image::dashboard) fn sample_dashboard_config() -> DashboardConfig 
         font_path: None,
         font_family: None,
         debug_output_path: None,
+        acrylic: DashboardAcrylicConfig::default(),
         slots: vec![
             slot("CPU", "usage %", DashboardMetric::CpuUsagePercent),
             slot("CPU", "temp C", DashboardMetric::CpuTemperature),
@@ -537,7 +646,9 @@ mod tests {
         DashboardRenderer, ImageSource, MetricCollector, format_metric_value, format_time,
         rendered_image, sample_background_frame, sample_dashboard_config, sample_metrics,
     };
-    use crate::config::{DashboardConfig, DashboardLayout, TemperatureUnit, TimeFormat};
+    use crate::config::{
+        DashboardAcrylicConfig, DashboardConfig, DashboardLayout, TemperatureUnit, TimeFormat,
+    };
     use crate::image::{
         FrameSource, PrepareOptions, RefreshOutcome, RenderedFrame, prepare_rendered_frame,
     };
@@ -600,6 +711,7 @@ mod tests {
             font_path: None,
             font_family: None,
             debug_output_path: None,
+            acrylic: DashboardAcrylicConfig::default(),
             slots: Vec::new(),
         })
         .unwrap();

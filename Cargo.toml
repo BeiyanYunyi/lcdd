@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
+bytemuck = { version = "1.24", features = ["derive"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 config = { version = "0.15", default-features = false, features = ["toml", "ron", "corn"] }
 ctrlc = "3.4"
@@ -22,3 +23,4 @@ pathfinder_geometry = "0.5"
 pollster = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 sysinfo = { version = "0.37", default-features = false, features = ["component", "system"] }
+wgpu = "27"

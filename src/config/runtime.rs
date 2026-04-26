@@ -485,6 +485,7 @@ mod tests {
             font_path: None,
             font_family: None,
             debug_output_path: None,
+            acrylic: crate::config::DashboardAcrylicConfig::default(),
             slots: vec![
                 slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
                 slot("CPU", "temp", DashboardMetric::CpuTemperature),

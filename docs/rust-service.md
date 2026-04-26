@@ -193,6 +193,11 @@ temperature_unit = "celsius"
 # font_path = "/path/to/NotoSansCJK-Regular.ttc"
 # debug_output_path = "./out/dashboard-debug.png"
 
+[dashboard.acrylic]
+enabled = false
+blur_strength = 12
+tint_alpha = 0.72
+
 [[dashboard.slots]]
 title = "CPU"
 subtitle = "usage %"
@@ -222,6 +227,9 @@ init_on_connect = false
 - `protocol.init_on_connect = false` is fine for my current cooler
 - `dashboard.slots` accepts `0..=4` configured slots
 - `dashboard.layout` defaults to `stack` and also supports `grid_2x2`
+- `dashboard.acrylic.enabled` defaults to `false`; when enabled on the headless `wgpu` renderer it uses a cached blurred backdrop under panel regions
+- `dashboard.acrylic.blur_strength` defaults to `12` and accepts `1..=32`
+- `dashboard.acrylic.tint_alpha` defaults to `0.72` and accepts `0.0..=1.0`
 - supported built-in slot metrics are `cpu_usage_percent`, `cpu_temperature`, `memory_used_percent`, and `time`
 - percent and temperature metrics render numeric values without automatic unit suffixes; include units directly in `dashboard.slots[].subtitle` when desired
 - `stack` provides 4 fixed top-aligned slot positions with title and subtitle on the left and data on the right
@@ -230,6 +238,7 @@ init_on_connect = false
 - `dashboard.font_path`, when set, overrides `dashboard.font_family`
 - if neither font setting is provided, the runtime tries a best-effort sans-serif fallback from system fonts
 - if `dashboard.debug_output_path` is set, the runtime writes the final composited frame to that path before JPEG upload
+- if `wgpu` is unavailable and the renderer falls back to `tiny-skia`, acrylic is disabled automatically and flat translucent panels are used instead
 - if fewer than 4 slots are configured, they render in the top-most positions
 - if no slots are configured, the runtime keeps background-image-only behavior
 

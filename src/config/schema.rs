@@ -17,7 +17,7 @@ use crate::protocol::{
     DEFAULT_VENDOR_ID,
 };
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct AppConfig {
     #[serde(default)]
     pub device: DeviceConfig,
@@ -183,7 +183,7 @@ impl SourceConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct DashboardConfig {
     #[serde(default = "default_dashboard_render_interval_ms")]
     pub render_interval_ms: u64,
@@ -200,7 +200,19 @@ pub struct DashboardConfig {
     #[serde(default)]
     pub debug_output_path: Option<PathBuf>,
     #[serde(default)]
+    pub acrylic: DashboardAcrylicConfig,
+    #[serde(default)]
     pub slots: Vec<DashboardSlot>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+pub struct DashboardAcrylicConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_dashboard_acrylic_blur_strength")]
+    pub blur_strength: u32,
+    #[serde(default = "default_dashboard_acrylic_tint_alpha")]
+    pub tint_alpha: f32,
 }
 
 impl DashboardConfig {
@@ -232,6 +244,7 @@ impl DashboardConfig {
                 "dashboard.font_family must not be empty when set"
             );
         }
+        self.acrylic.validate()?;
 
         Ok(())
     }
@@ -247,7 +260,32 @@ impl Default for DashboardConfig {
             font_path: None,
             font_family: None,
             debug_output_path: None,
+            acrylic: DashboardAcrylicConfig::default(),
             slots: Vec::new(),
+        }
+    }
+}
+
+impl DashboardAcrylicConfig {
+    fn validate(&self) -> Result<()> {
+        ensure!(
+            (1..=32).contains(&self.blur_strength),
+            "dashboard.acrylic.blur_strength must be between 1 and 32"
+        );
+        ensure!(
+            (0.0..=1.0).contains(&self.tint_alpha),
+            "dashboard.acrylic.tint_alpha must be between 0.0 and 1.0"
+        );
+        Ok(())
+    }
+}
+
+impl Default for DashboardAcrylicConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            blur_strength: default_dashboard_acrylic_blur_strength(),
+            tint_alpha: default_dashboard_acrylic_tint_alpha(),
         }
     }
 }
@@ -462,6 +500,14 @@ fn default_dashboard_render_interval_ms() -> u64 {
     1000
 }
 
+fn default_dashboard_acrylic_blur_strength() -> u32 {
+    12
+}
+
+fn default_dashboard_acrylic_tint_alpha() -> f32 {
+    0.72
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -472,9 +518,9 @@ mod tests {
     use log::LevelFilter;
 
     use super::{
-        AppConfig, DashboardConfig, DashboardLayout, DashboardMetric, DashboardSlot, LoggingConfig,
-        SourceConfig, TemperatureUnit, TimeFormat, default_config_path, load_config,
-        resolve_base_dir,
+        AppConfig, DashboardAcrylicConfig, DashboardConfig, DashboardLayout, DashboardMetric,
+        DashboardSlot, LoggingConfig, SourceConfig, TemperatureUnit, TimeFormat,
+        default_config_path, load_config, resolve_base_dir,
     };
 
     #[cfg(unix)]
@@ -576,6 +622,7 @@ mod tests {
         assert_eq!(dashboard.font_path, None);
         assert_eq!(dashboard.font_family, None);
         assert_eq!(dashboard.debug_output_path, None);
+        assert_eq!(dashboard.acrylic, DashboardAcrylicConfig::default());
         assert!(dashboard.slots.is_empty());
         assert!(dashboard.validate().is_ok());
     }
@@ -590,6 +637,7 @@ mod tests {
             font_path: None,
             font_family: None,
             debug_output_path: None,
+            acrylic: DashboardAcrylicConfig::default(),
             slots: Vec::new(),
         };
 
@@ -934,6 +982,7 @@ path = "./image.jpg"
             font_path: None,
             font_family: None,
             debug_output_path: None,
+            acrylic: DashboardAcrylicConfig::default(),
             slots: vec![
                 slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
                 slot("CPU", "temp", DashboardMetric::CpuTemperature),
@@ -971,6 +1020,7 @@ path = "./image.jpg"
             font_path: None,
             font_family: None,
             debug_output_path: None,
+            acrylic: DashboardAcrylicConfig::default(),
             slots: vec![
                 slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
                 slot("CPU", "temp", DashboardMetric::CpuTemperature),
@@ -993,6 +1043,7 @@ path = "./image.jpg"
             font_path: None,
             font_family: None,
             debug_output_path: None,
+            acrylic: DashboardAcrylicConfig::default(),
             slots: vec![
                 slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
                 slot("CPU", "temp", DashboardMetric::CpuTemperature),
@@ -1014,6 +1065,7 @@ path = "./image.jpg"
             font_path: None,
             font_family: Some("Noto Sans".to_string()),
             debug_output_path: None,
+            acrylic: DashboardAcrylicConfig::default(),
             slots: vec![slot("CPU", "usage", DashboardMetric::CpuUsagePercent)],
         };
 
@@ -1030,6 +1082,7 @@ path = "./image.jpg"
             font_path: Some(PathBuf::from("/tmp/font.ttf")),
             font_family: None,
             debug_output_path: None,
+            acrylic: DashboardAcrylicConfig::default(),
             slots: vec![slot("CPU", "usage", DashboardMetric::CpuUsagePercent)],
         };
 
@@ -1046,6 +1099,7 @@ path = "./image.jpg"
             font_path: None,
             font_family: Some("   ".to_string()),
             debug_output_path: None,
+            acrylic: DashboardAcrylicConfig::default(),
             slots: vec![slot("CPU", "usage", DashboardMetric::CpuUsagePercent)],
         };
 
@@ -1062,6 +1116,7 @@ path = "./image.jpg"
             font_path: None,
             font_family: None,
             debug_output_path: Some(PathBuf::from("/tmp/dashboard-debug.png")),
+            acrylic: DashboardAcrylicConfig::default(),
             slots: vec![slot("CPU", "usage", DashboardMetric::CpuUsagePercent)],
         };
 
@@ -1087,6 +1142,76 @@ layout = "grid_2x2"
             .unwrap();
 
         assert_eq!(parsed.dashboard.layout, DashboardLayout::Grid2x2);
+    }
+
+    #[test]
+    fn dashboard_acrylic_defaults_to_disabled_with_internal_tuning() {
+        let parsed = Config::builder()
+            .add_source(File::from_str(
+                r#"
+[source]
+path = "/tmp/image.jpg"
+"#,
+                FileFormat::Toml,
+            ))
+            .build()
+            .unwrap()
+            .try_deserialize::<AppConfig>()
+            .unwrap();
+
+        assert_eq!(parsed.dashboard.acrylic, DashboardAcrylicConfig::default());
+    }
+
+    #[test]
+    fn dashboard_acrylic_parses_small_tunables() {
+        let parsed = Config::builder()
+            .add_source(File::from_str(
+                r#"
+[source]
+path = "/tmp/image.jpg"
+
+[dashboard.acrylic]
+enabled = true
+blur_strength = 16
+tint_alpha = 0.65
+"#,
+                FileFormat::Toml,
+            ))
+            .build()
+            .unwrap()
+            .try_deserialize::<AppConfig>()
+            .unwrap();
+
+        assert_eq!(
+            parsed.dashboard.acrylic,
+            DashboardAcrylicConfig {
+                enabled: true,
+                blur_strength: 16,
+                tint_alpha: 0.65,
+            }
+        );
+        assert!(parsed.dashboard.validate().is_ok());
+    }
+
+    #[test]
+    fn dashboard_acrylic_rejects_invalid_tint_alpha() {
+        let dashboard = DashboardConfig {
+            render_interval_ms: 1000,
+            layout: DashboardLayout::Stack,
+            time_format: TimeFormat::TwentyFourHour,
+            temperature_unit: TemperatureUnit::Celsius,
+            font_path: None,
+            font_family: None,
+            debug_output_path: None,
+            acrylic: DashboardAcrylicConfig {
+                enabled: true,
+                blur_strength: 12,
+                tint_alpha: 1.5,
+            },
+            slots: vec![slot("CPU", "usage", DashboardMetric::CpuUsagePercent)],
+        };
+
+        assert!(dashboard.validate().is_err());
     }
 
     #[test]
@@ -1119,6 +1244,7 @@ layout = "masonry"
             font_path: None,
             font_family: None,
             debug_output_path: None,
+            acrylic: DashboardAcrylicConfig::default(),
             slots: vec![
                 slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
                 slot("TIME", "local", DashboardMetric::Time),

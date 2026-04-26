@@ -4,7 +4,11 @@ use iced::alignment::{Horizontal, Vertical};
 use iced::widget::{Column, Space, container, row, text};
 use iced::{Font as IcedFont, Length, Padding, Theme as IcedTheme};
 
-use super::shared::{DATA_COLOR, SUBTITLE_COLOR, TITLE_COLOR, color_from, panel_style};
+use super::shared::{
+    DATA_COLOR, PANEL_CORNER_RADIUS, SUBTITLE_COLOR, TITLE_COLOR, color_from, panel_style,
+    transparent_panel_style,
+};
+use super::{PanelGeometry, PanelVisualStyle};
 use crate::config::DashboardSlot;
 use crate::image::dashboard::{DashboardFont, DashboardMetrics};
 use crate::protocol::EXPECTED_JPEG_HEIGHT;
@@ -23,6 +27,7 @@ pub(super) fn overlay_view<'a, R>(
     font: &DashboardFont,
     slots: &'a [DashboardSlot],
     metrics: Option<DashboardMetrics>,
+    panel_visual_style: PanelVisualStyle,
 ) -> iced::Element<'a, (), IcedTheme, R>
 where
     R: AdvancedRenderer + advanced_text::Renderer<Font = IcedFont> + 'a,
@@ -41,6 +46,7 @@ where
             slot.subtitle.clone(),
             value,
             row_height,
+            panel_visual_style,
         ));
     }
 
@@ -57,6 +63,7 @@ fn panel_view<'a, R>(
     subtitle: String,
     value: String,
     row_height: u32,
+    panel_visual_style: PanelVisualStyle,
 ) -> iced::Element<'a, (), IcedTheme, R>
 where
     R: AdvancedRenderer + advanced_text::Renderer<Font = IcedFont> + 'a,
@@ -100,7 +107,10 @@ where
         bottom: PANEL_BOTTOM_PADDING as f32,
         left: PANEL_PADDING_X as f32,
     })
-    .style(|_| panel_style())
+    .style(move |_| match panel_visual_style {
+        PanelVisualStyle::Flat => panel_style(),
+        PanelVisualStyle::TextOnly => transparent_panel_style(),
+    })
     .into()
 }
 
@@ -135,6 +145,19 @@ fn row_height_for(height: u32) -> u32 {
         / 4
 }
 
+pub(super) fn panel_geometries(slot_count: usize) -> Vec<PanelGeometry> {
+    let row_height = row_height_for(u32::from(EXPECTED_JPEG_HEIGHT)) as f32;
+    (0..slot_count.min(4))
+        .map(|index| PanelGeometry {
+            x: PANEL_MARGIN as f32,
+            y: PANEL_MARGIN as f32 + index as f32 * (row_height + PANEL_GAP as f32),
+            width: 320.0 - PANEL_MARGIN as f32 * 2.0,
+            height: row_height,
+            corner_radius: PANEL_CORNER_RADIUS,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -160,6 +183,7 @@ mod tests {
             font_path: None,
             font_family: None,
             debug_output_path: None,
+            acrylic: crate::config::DashboardAcrylicConfig::default(),
             slots: vec![
                 slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
                 slot("TIME", "local", DashboardMetric::Time),

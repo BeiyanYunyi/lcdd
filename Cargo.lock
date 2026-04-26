@@ -1803,6 +1803,7 @@ name = "lcdd"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytemuck",
  "chrono",
  "config",
  "ctrlc",
@@ -1820,6 +1821,7 @@ dependencies = [
  "pollster",
  "serde",
  "sysinfo",
+ "wgpu",
 ]
 
 [[package]]

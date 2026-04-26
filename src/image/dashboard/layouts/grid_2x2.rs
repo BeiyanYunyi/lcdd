@@ -4,7 +4,11 @@ use iced::alignment::Horizontal;
 use iced::widget::{Column, Space, container, row, text};
 use iced::{Font as IcedFont, Length, Theme as IcedTheme};
 
-use super::shared::{DATA_COLOR, SUBTITLE_COLOR, TITLE_COLOR, color_from, panel_style};
+use super::shared::{
+    DATA_COLOR, PANEL_CORNER_RADIUS, SUBTITLE_COLOR, TITLE_COLOR, color_from, panel_style,
+    transparent_panel_style,
+};
+use super::{PanelGeometry, PanelVisualStyle};
 use crate::config::DashboardSlot;
 use crate::image::dashboard::{DashboardFont, DashboardMetrics};
 
@@ -20,11 +24,12 @@ pub(super) fn overlay_view<'a, R>(
     font: &DashboardFont,
     slots: &'a [DashboardSlot],
     metrics: Option<DashboardMetrics>,
+    panel_visual_style: PanelVisualStyle,
 ) -> iced::Element<'a, (), IcedTheme, R>
 where
     R: AdvancedRenderer + advanced_text::Renderer<Font = IcedFont> + 'a,
 {
-    container(grid_rows::<R>(font, slots, metrics))
+    container(grid_rows::<R>(font, slots, metrics, panel_visual_style))
         .width(Length::Fill)
         .height(Length::Fill)
         .padding(GRID_PADDING)
@@ -35,21 +40,22 @@ fn grid_rows<'a, R>(
     font: &DashboardFont,
     slots: &'a [DashboardSlot],
     metrics: Option<DashboardMetrics>,
+    panel_visual_style: PanelVisualStyle,
 ) -> Column<'a, (), IcedTheme, R>
 where
     R: AdvancedRenderer + advanced_text::Renderer<Font = IcedFont> + 'a,
 {
     let top = row![
-        grid_cell_view::<R>(font, slots.first(), metrics.as_ref()),
+        grid_cell_view::<R>(font, slots.first(), metrics.as_ref(), panel_visual_style),
         Space::new().width(Length::Fixed(f32::from(GRID_COLUMN_GAP))),
-        grid_cell_view::<R>(font, slots.get(1), metrics.as_ref())
+        grid_cell_view::<R>(font, slots.get(1), metrics.as_ref(), panel_visual_style)
     ]
     .width(Length::Fill)
     .height(Length::FillPortion(1));
     let bottom = row![
-        grid_cell_view::<R>(font, slots.get(2), metrics.as_ref()),
+        grid_cell_view::<R>(font, slots.get(2), metrics.as_ref(), panel_visual_style),
         Space::new().width(Length::Fixed(f32::from(GRID_COLUMN_GAP))),
-        grid_cell_view::<R>(font, slots.get(3), metrics.as_ref())
+        grid_cell_view::<R>(font, slots.get(3), metrics.as_ref(), panel_visual_style)
     ]
     .width(Length::Fill)
     .height(Length::FillPortion(1));
@@ -66,6 +72,7 @@ fn grid_cell_view<'a, R>(
     font: &DashboardFont,
     slot: Option<&'a DashboardSlot>,
     metrics: Option<&DashboardMetrics>,
+    panel_visual_style: PanelVisualStyle,
 ) -> iced::Element<'a, (), IcedTheme, R>
 where
     R: AdvancedRenderer + advanced_text::Renderer<Font = IcedFont> + 'a,
@@ -107,7 +114,10 @@ where
                 )
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .style(|_| panel_style())
+                .style(move |_| match panel_visual_style {
+                    PanelVisualStyle::Flat => panel_style(),
+                    PanelVisualStyle::TextOnly => transparent_panel_style(),
+                })
                 .center_x(Length::Fill)
                 .center_y(Length::Fill),
             )
@@ -177,6 +187,38 @@ where
     .into()
 }
 
+pub(super) fn panel_geometries(slot_count: usize) -> Vec<PanelGeometry> {
+    let panel_width = (320.0 - 2.0 * f32::from(GRID_PADDING) - f32::from(GRID_COLUMN_GAP)) / 2.0;
+    let panel_height = (320.0 - 2.0 * f32::from(GRID_PADDING) - f32::from(GRID_ROW_GAP)) / 2.0;
+    let positions = [
+        (f32::from(GRID_PADDING), f32::from(GRID_PADDING)),
+        (
+            f32::from(GRID_PADDING) + panel_width + f32::from(GRID_COLUMN_GAP),
+            f32::from(GRID_PADDING),
+        ),
+        (
+            f32::from(GRID_PADDING),
+            f32::from(GRID_PADDING) + panel_height + f32::from(GRID_ROW_GAP),
+        ),
+        (
+            f32::from(GRID_PADDING) + panel_width + f32::from(GRID_COLUMN_GAP),
+            f32::from(GRID_PADDING) + panel_height + f32::from(GRID_ROW_GAP),
+        ),
+    ];
+
+    positions
+        .into_iter()
+        .take(slot_count.min(4))
+        .map(|(x, y)| PanelGeometry {
+            x,
+            y,
+            width: panel_width,
+            height: panel_height,
+            corner_radius: PANEL_CORNER_RADIUS,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::config::{
@@ -228,6 +270,7 @@ mod tests {
             font_path: None,
             font_family: None,
             debug_output_path: None,
+            acrylic: crate::config::DashboardAcrylicConfig::default(),
             slots: vec![
                 slot("CPU", "usage", DashboardMetric::CpuUsagePercent),
                 slot("TIME", "local", DashboardMetric::Time),

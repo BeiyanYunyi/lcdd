@@ -206,6 +206,11 @@ temperature_unit = "celsius"
 # font_path = "/path/to/NotoSansCJK-Regular.ttc"
 # debug_output_path = "./out/dashboard-debug.png"
 
+[dashboard.acrylic]
+enabled = false
+blur_strength = 12
+tint_alpha = 0.72
+
 [[dashboard.slots]]
 title = "CPU"
 subtitle = "usage %"
@@ -246,6 +251,7 @@ Relative path resolution:
 
 The dashboard renderer supports UTF-8 labels for Latin and common CJK text. It does not perform complex-script shaping.
 If `dashboard.debug_output_path` is set, the service also writes the final composited frame to disk before JPEG upload so you can inspect what the LCD is actually being sent.
+`dashboard.acrylic` is optional and only uses blurred backdrops on the headless `wgpu` renderer. If `wgpu` is unavailable and the runtime falls back to `tiny-skia`, the service logs a warning and renders the existing flat translucent panels instead.
 
 Behavior summary:
 
@@ -253,6 +259,7 @@ Behavior summary:
 - packetizes the JPEG natively into `1024`-byte HID reports
 - decodes common image formats, optionally rotates them, and re-encodes to an internal JPEG
 - can render a live dashboard overlay with up to 4 slots over a background image in either stacked or `2x2` grid layout
+- can optionally render `wgpu`-accelerated acrylic panel backdrops using cached full-frame blur when `dashboard.acrylic.enabled = true`
 - renders dashboard text through `font-kit`, with UTF-8 support for Latin and common CJK labels
 - collects built-in metrics for aggregate CPU usage, CPU temperature, memory usage, and local time
 - verifies the device ack after each upload

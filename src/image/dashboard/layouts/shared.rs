@@ -13,6 +13,7 @@ pub(in crate::image::dashboard) const BACKGROUND_COLOR: [u8; 4] = [0, 0, 0, 255]
 pub(super) const TITLE_COLOR: [u8; 4] = [235, 235, 235, 255];
 pub(super) const SUBTITLE_COLOR: [u8; 4] = [175, 175, 175, 255];
 pub(super) const DATA_COLOR: [u8; 4] = [255, 255, 255, 255];
+pub(in crate::image::dashboard) const PANEL_CORNER_RADIUS: f32 = 0.0;
 
 pub(super) fn background_view<'a, R>(
     background: &RenderedFrame,
@@ -44,7 +45,19 @@ where
 }
 
 pub(super) fn panel_style() -> container::Style {
-    container::Style::default().background(IcedBackground::Color(color_from(PANEL_COLOR)))
+    container::Style::default()
+        .background(IcedBackground::Color(color_from(PANEL_COLOR)))
+        .border(iced::Border {
+            radius: PANEL_CORNER_RADIUS.into(),
+            ..iced::Border::default()
+        })
+}
+
+pub(super) fn transparent_panel_style() -> container::Style {
+    container::Style::default().border(iced::Border {
+        radius: PANEL_CORNER_RADIUS.into(),
+        ..iced::Border::default()
+    })
 }
 
 pub(super) fn color_from(color: [u8; 4]) -> IcedColor {
