@@ -1,3 +1,4 @@
+mod animated;
 mod dashboard;
 mod jpeg;
 mod packetize;
@@ -6,6 +7,7 @@ mod source;
 
 use std::path::{Path, PathBuf};
 
+pub use animated::AnimatedSource;
 pub use dashboard::ImageSource;
 pub use prepare::{PrepareOptions, Rotation};
 pub use source::{FrameSource, RefreshOutcome};

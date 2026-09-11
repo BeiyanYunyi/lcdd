@@ -146,6 +146,7 @@ fn ensure_supported_format(path: &Path, format: ImageFormat) -> Result<()> {
     if matches!(
         format,
         ImageFormat::Bmp
+            | ImageFormat::Gif
             | ImageFormat::Ico
             | ImageFormat::Jpeg
             | ImageFormat::Png
@@ -155,7 +156,7 @@ fn ensure_supported_format(path: &Path, format: ImageFormat) -> Result<()> {
     }
 
     Err(anyhow!(
-        "{} must be one of: bmp, ico, png, jpg/jpeg, webp",
+        "{} must be one of: bmp, gif, ico, png, jpg/jpeg, webp",
         path.display()
     ))
 }

@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use log::{error, info};
 
 use super::{AppConfig, load_config};
-use crate::image::{FrameSource, ImageSource, PrepareOptions};
+use crate::image::{AnimatedSource, FrameSource, ImageSource, PrepareOptions};
 use crate::logging;
 
 pub struct RuntimeState {
@@ -155,6 +155,19 @@ impl RuntimeState {
     fn build_source(config: &AppConfig) -> Result<Box<dyn FrameSource>> {
         let reload_interval = Duration::from_millis(config.refresh.reload_check_interval_ms);
         let prepare_options = PrepareOptions::new(config.source.rotation()?);
+
+        let is_animation = config
+            .source
+            .path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("gif"));
+
+        if is_animation {
+            return Ok(Box::new(AnimatedSource::new(
+                config.source.path.clone(),
+                prepare_options,
+            )?));
+        }
 
         Ok(Box::new(ImageSource::new(
             config.source.path.clone(),
