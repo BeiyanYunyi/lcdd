@@ -308,7 +308,7 @@ uv run tools/lcdd_hid.py list-devices
 ## Limitations
 
 - The project is currently Linux-oriented.
-- The Rust service supports a background image with a simple built-in dashboard overlay, not arbitrary animation generation yet.
+- The Rust service supports a background image with a simple built-in dashboard overlay, plus animated GIF playback (frames are decoded once and cycled on their own delays); it does not generate arbitrary animations.
 - Dashboard text rendering depends on a usable system font unless `dashboard.font_path` points to a specific font file.
 - Images must already be preprocessed to `320x320` JPEG.
 - Some protocol semantics are still inferred from capture data rather than fully proven.
